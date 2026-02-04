@@ -1,0 +1,5 @@
+{
+  "name": "ZenReader",
+  "description": "A minimalist, offline-capable comic reader PWA with support for CBR, CBZ, and PDF formats.",
+  "requestFramePermissions": []
+}
