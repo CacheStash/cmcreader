@@ -7,7 +7,8 @@ import { Button } from './Button';
 import { 
   FiPlus, FiBookOpen, FiTrash2, FiUploadCloud, FiFileText, 
   FiFolder, FiMenu, FiX, FiLogOut, FiUser, FiAlertCircle, 
-  FiRefreshCw, FiLock, FiGrid, FiList, FiMoreVertical, FiCheck 
+  FiRefreshCw, FiLock, FiGrid, FiList, FiMoreVertical, FiCheck,
+  FiCalendar, FiType // Icon baru untuk Sort
 } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { AuthModal } from './AuthModal';
@@ -48,8 +49,8 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   // --- UI STATE ---
-  // MODIFIED: Default viewMode sekarang 'list'
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
+  const [sortBy, setSortBy] = useState<'date' | 'name'>('date'); // NEW: Sort State
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   
   // --- FOLDER STATE ---
@@ -68,14 +69,25 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     return db.folders.toArray();
   }, [user]);
 
+  // NEW: Query yang menyesuaikan sorting
   const comics = useLiveQuery(async () => {
     if (!user) return [];
-    let collection = db.comics.orderBy('dateAdded').reverse();
+    
+    let collection;
+    
+    // Tentukan metode sorting
+    if (sortBy === 'name') {
+        collection = db.comics.orderBy('title'); // A-Z
+    } else {
+        collection = db.comics.orderBy('dateAdded').reverse(); // Newest First (Default)
+    }
+
+    // Filter folder (Dexie butuh filter manual setelah sort jika index kompleks)
     if (activeFolderId !== null) {
       return (await collection.toArray()).filter(c => c.folderId === activeFolderId);
     }
     return collection.toArray();
-  }, [activeFolderId, user]);
+  }, [activeFolderId, user, sortBy]); // Tambahkan sortBy ke dependency
 
   // --- SYNC LOGIC ---
   useEffect(() => {
@@ -407,8 +419,19 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           <div className="flex items-center gap-3">
              {isSyncing && <FiRefreshCw className="animate-spin text-blue-400" />}
              
-             {/* View Mode Toggle (Clean Header) */}
+             {/* NEW: Sort & View Controls */}
              <div className="flex bg-gray-800 rounded-lg p-1">
+                {/* Sort Toggle */}
+                <button 
+                   onClick={() => setSortBy(prev => prev === 'date' ? 'name' : 'date')}
+                   className="p-2 rounded text-gray-400 hover:text-white flex items-center gap-1 border-r border-gray-700 mr-1 pr-3"
+                   title={`Sorted by ${sortBy === 'date' ? 'Date Added' : 'Alphabetical'}`}
+                >
+                   {sortBy === 'date' ? <FiCalendar /> : <FiType />}
+                   <span className="text-xs font-bold hidden sm:inline">{sortBy === 'date' ? 'Date' : 'A-Z'}</span>
+                </button>
+
+                {/* View Mode */}
                 <button 
                   onClick={() => setViewMode('grid')}
                   className={`p-2 rounded ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
