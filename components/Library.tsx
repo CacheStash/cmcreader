@@ -10,9 +10,9 @@ interface LibraryProps {
   onSelectBook: (book: ComicBook) => void;
 }
 
+// ... (Bagian CoverImage biarkan sama, tidak ada perubahan) ...
 const CoverImage = ({ blob, title }: { blob?: Blob, title: string }) => {
   const [url, setUrl] = useState<string>('');
-
   useEffect(() => {
     if (blob) {
       const objectUrl = URL.createObjectURL(blob);
@@ -29,7 +29,6 @@ const CoverImage = ({ blob, title }: { blob?: Blob, title: string }) => {
       </div>
     );
   }
-
   return <img src={url} alt={title} className="w-full h-full object-cover transition-opacity duration-300 group-hover:opacity-80" />;
 };
 
@@ -46,6 +45,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         const file = files[i];
         const ext = getFileExtension(file.name);
         
+        // Terima file valid saja
         if (['cbz', 'pdf'].includes(ext)) {
           const coverBlob = await extractCover(file, ext);
           
@@ -62,7 +62,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       }
     } catch (error) {
       console.error("Error adding files:", error);
-      alert("Error adding file. See console for details.");
+      alert("Gagal memproses file. Pastikan file tidak rusak.");
     } finally {
       setIsProcessing(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -73,23 +73,17 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     if (event.target.files) processFiles(event.target.files);
   };
 
+  // ... (Event handlers drag & drop biarkan sama) ...
   const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
+    e.preventDefault(); e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") setDragActive(true);
+    else if (e.type === "dragleave") setDragActive(false);
   };
 
   const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      processFiles(e.dataTransfer.files);
-    }
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) processFiles(e.dataTransfer.files);
   };
 
   const deleteBook = async (e: React.MouseEvent, id?: number) => {
@@ -97,16 +91,12 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     if (id && confirm("Delete this comic?")) await db.comics.delete(id);
   };
 
-  // Cek apakah library kosong
   const isEmpty = !comics || comics.length === 0;
 
   return (
     <div 
       className={`min-h-screen p-6 pb-24 relative transition-colors duration-200 ${dragActive ? 'bg-blue-900/20' : ''}`}
-      onDragEnter={handleDrag}
-      onDragLeave={handleDrag}
-      onDragOver={handleDrag}
-      onDrop={handleDrop}
+      onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}
     >
       <div className="max-w-7xl mx-auto relative z-10">
         <header className="flex justify-between items-center mb-8 sticky top-0 z-20 bg-black/80 backdrop-blur-md py-4">
@@ -119,12 +109,15 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
               <span className="hidden sm:inline">Add Comic</span>
             </span>
           </Button>
+          
+          {/* PERBAIKAN UTAMA DI SINI: MIME TYPES LENGKAP */}
           <input
             type="file"
             ref={fileInputRef}
             onChange={handleFileUpload}
             className="hidden"
-            accept=".cbz,.pdf"
+            // Tambahkan MIME types ZIP agar Android mengenali .cbz
+            accept=".cbz,.pdf,application/pdf,application/vnd.comicbook+zip,application/x-cbz,application/zip,application/x-zip-compressed,multipart/x-zip"
             multiple
           />
         </header>
@@ -132,18 +125,17 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         {isProcessing && (
           <div className="mb-6 p-4 bg-blue-900/20 border border-blue-800 rounded-lg animate-pulse text-blue-200 flex items-center justify-center gap-3">
              <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-             Processing files & generating covers...
+             Processing files...
           </div>
         )}
 
-        {/* Empty State / Drag Instructions */}
         {isEmpty && !isProcessing && (
           <div className="absolute inset-0 top-32 flex flex-col items-center justify-center opacity-30 pointer-events-none select-none">
             <FiUploadCloud className="text-9xl mb-6 text-gray-500" />
             <h2 className="text-4xl font-bold text-gray-400 mb-2">Drag files here</h2>
             <div className="flex items-center gap-2 text-xl text-gray-500">
                <FiFileText />
-               <span>.cbz and .pdf only</span>
+               <span>.cbz and .pdf</span>
             </div>
           </div>
         )}
@@ -175,8 +167,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           ))}
         </div>
       </div>
-
-      {/* Visual Overlay saat user sedang Drag file di atas window */}
       {dragActive && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-blue-900/40 backdrop-blur-sm pointer-events-none border-4 border-blue-400 border-dashed m-4 rounded-3xl">
           <FiUploadCloud className="text-8xl text-white mb-4 animate-bounce" />
