@@ -8,6 +8,7 @@ export interface Folder {
   id?: number;         // ID Lokal (Dexie)
   supabaseId?: number; // ID Cloud (Supabase)
   name: string;
+  parentId?: number;   // NEW: Untuk Sub-Folder
 }
 
 export interface ComicBook {
@@ -15,7 +16,6 @@ export interface ComicBook {
   supabaseId?: number; // ID Cloud (Supabase)
   
   title: string;
-  // fileHandle jadi optional, karena kalau cuma data dari cloud, filenya belum tentu ada di HP
   fileHandle?: File;   
   coverBlob?: Blob;
   
