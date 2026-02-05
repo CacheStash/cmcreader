@@ -17,7 +17,6 @@ interface LibraryProps {
   onSelectBook: (book: ComicBook) => void;
 }
 
-// --- Komponen Cover Image (Thumbnail) ---
 const CoverImage = ({ blob, title }: { blob?: Blob, title: string }) => {
   const [url, setUrl] = useState<string>('');
   useEffect(() => {
@@ -49,7 +48,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   // --- UI STATE ---
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid'); // REQ 2: View Toggle
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   
   // --- FOLDER STATE ---
@@ -57,10 +56,10 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const [newFolderName, setNewFolderName] = useState("");
   const [showFolderInput, setShowFolderInput] = useState(false);
 
-  // --- MOVE BOOK STATE (REQ 1) ---
-  const [bookToMove, setBookToMove] = useState<ComicBook | null>(null); // Buku yg sedang diedit
+  // --- MOVE BOOK STATE ---
+  const [bookToMove, setBookToMove] = useState<ComicBook | null>(null);
   const [showMoveModal, setShowMoveModal] = useState(false);
-  const [quickNewFolderName, setQuickNewFolderName] = useState(""); // Buat folder baru via modal
+  const [quickNewFolderName, setQuickNewFolderName] = useState("");
 
   // --- QUERY DATA ---
   const folders = useLiveQuery(async () => {
@@ -86,7 +85,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     if (!user) return;
     setIsSyncing(true);
     try {
-      // Sync Folders
       const { data: cloudFolders } = await supabase.from('folders').select('*');
       if (cloudFolders) {
         for (const cf of cloudFolders) {
@@ -98,7 +96,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
            }
         }
       }
-      // Sync Comics Metadata
       const { data: cloudComics } = await supabase.from('comics').select('*');
       if (cloudComics) {
          for (const cc of cloudComics) {
@@ -134,17 +131,13 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   };
 
   // --- ACTIONS ---
-
-  // Reusable function to move book (Used by DnD and Context Menu)
   const assignBookToFolder = async (bookId: number, folderId: number | null) => {
-    // Local Update
     if (folderId === null) {
          await db.comics.update(bookId, { folderId: undefined } as any);
     } else {
          await db.comics.update(bookId, { folderId });
     }
 
-    // Cloud Update
     if (user) {
         const book = await db.comics.get(bookId);
         const targetFolder = folderId ? await db.folders.get(folderId) : null;
@@ -249,7 +242,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     }
   };
 
-  // --- EVENT HANDLERS ---
   const handleDropToFolder = (e: React.DragEvent, folderId: number | null) => {
     e.preventDefault(); e.stopPropagation();
     const bookIdString = e.dataTransfer.getData("bookId");
@@ -271,7 +263,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
 
   // --- RENDER ---
   if (!user) {
-    // ... (Tampilan Logout tetap sama) ...
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 p-4 relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 opacity-20">
@@ -320,11 +311,26 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         fixed md:sticky top-0 h-screen w-64 bg-black/90 border-r border-gray-800 z-40 transform transition-transform duration-300 flex flex-col
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
+        {/* Sidebar Header */}
         <div className="p-4 border-b border-gray-800 flex items-center justify-between">
            <h2 className="font-bold text-gray-400 uppercase text-xs tracking-wider">Library</h2>
            <button onClick={() => setSidebarOpen(false)} className="md:hidden text-gray-400"><FiX /></button>
         </div>
+
+        {/* Add Comic Button */}
+        <div className="p-3 pb-0">
+           <Button 
+              onClick={() => fileInputRef.current?.click()} 
+              disabled={isProcessing} 
+              className="w-full justify-center !bg-blue-600 hover:!bg-blue-500 text-white"
+           >
+              <span className="flex items-center gap-2">
+                <FiPlus className="text-xl" /> Add Comic
+              </span>
+           </Button>
+        </div>
         
+        {/* Navigation / Folders */}
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           <button 
             onClick={() => setActiveFolderId(null)}
@@ -368,14 +374,31 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
             </button>
           )}
         </div>
+
+        {/* REQ: SIDEBAR FOOTER (User Info & Logout) */}
+        <div className="p-4 border-t border-gray-800 bg-gray-900/50 mt-auto">
+           <div className="flex items-center gap-3 mb-3 px-1">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-xs font-bold">
+                 {user.email?.charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                 <p className="text-sm font-medium text-white truncate">{user.email}</p>
+                 <p className="text-xs text-gray-500">Free Plan</p>
+              </div>
+           </div>
+           <Button onClick={() => signOut()} className="w-full justify-center !bg-red-500/10 !text-red-400 hover:!bg-red-500/20 border border-red-500/20 text-sm py-1.5">
+               <span className="flex items-center gap-2"><FiLogOut /> Logout</span>
+           </Button>
+        </div>
       </aside>
 
       {/* MAIN CONTENT */}
       <div className="flex-1 p-6 pb-24 relative z-10 w-full overflow-hidden">
+        {/* Main Header */}
         <header className="flex justify-between items-center mb-8 sticky top-0 z-20 bg-gray-900/80 backdrop-blur-md py-4">
           <div className="flex items-center gap-4">
             <button onClick={() => setSidebarOpen(true)} className="md:hidden text-2xl text-white"><FiMenu /></button>
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent truncate max-w-[200px] md:max-w-none">
               {activeFolderId ? folders?.find(f => f.id === activeFolderId)?.name : 'ZenReader'}
             </h1>
           </div>
@@ -383,8 +406,8 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           <div className="flex items-center gap-3">
              {isSyncing && <FiRefreshCw className="animate-spin text-blue-400" />}
              
-             {/* REQ 2: VIEW MODE TOGGLE */}
-             <div className="flex bg-gray-800 rounded-lg p-1 mr-2">
+             {/* View Mode Toggle (Clean Header) */}
+             <div className="flex bg-gray-800 rounded-lg p-1">
                 <button 
                   onClick={() => setViewMode('grid')}
                   className={`p-2 rounded ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
@@ -398,23 +421,9 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                     <FiList />
                 </button>
              </div>
-
-             <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-400 hidden sm:block">{user.email}</span>
-                <Button onClick={() => signOut()} className="!bg-red-500/10 !text-red-400 hover:!bg-red-500/20 shadow-none px-3">
-                   <FiLogOut />
-                </Button>
-                <div className="h-6 w-px bg-gray-700 mx-2"></div>
-             </div>
-
-            <Button onClick={() => fileInputRef.current?.click()} disabled={isProcessing}>
-              <span className="flex items-center gap-2">
-                <FiPlus className="text-xl" />
-                <span className="hidden sm:inline">Add Comic</span>
-              </span>
-            </Button>
-            
-            <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && processFiles(e.target.files)} className="hidden" accept=".cbz,.pdf,application/pdf,application/vnd.comicbook+zip,application/x-cbz,application/zip,application/x-zip-compressed,multipart/x-zip" multiple />
+             
+             {/* Hidden Input File (Triggered by Sidebar Button) */}
+             <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && processFiles(e.target.files)} className="hidden" accept=".cbz,.pdf,application/pdf,application/vnd.comicbook+zip,application/x-cbz,application/zip,application/x-zip-compressed,multipart/x-zip" multiple />
           </div>
         </header>
 
@@ -422,17 +431,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           <div className="mb-6 p-4 bg-blue-900/20 border border-blue-800 rounded-lg animate-pulse text-blue-200 flex items-center justify-center gap-3">
              <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
              Processing files...
-          </div>
-        )}
-
-        {(!comics || comics.length === 0) && !isProcessing && (
-          <div className="absolute inset-0 top-32 flex flex-col items-center justify-center opacity-30 pointer-events-none select-none">
-            <FiUploadCloud className="text-9xl mb-6 text-gray-500" />
-            <h2 className="text-4xl font-bold text-gray-400 mb-2">Drag files here</h2>
-            <div className="flex items-center gap-2 text-xl text-gray-500">
-               <FiFileText />
-               <span>.cbz and .pdf</span>
-            </div>
           </div>
         )}
 
@@ -468,7 +466,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                     </div>
                   </div>
 
-                  {/* REQ 1: Action Menu on Card */}
                   <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-all">
                      <button 
                         onClick={(e) => { e.stopPropagation(); setBookToMove(book); setShowMoveModal(true); }}
@@ -490,12 +487,10 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
             })}
           </div>
         ) : (
-          // --- LIST VIEW (REQ 2) ---
           <div className="flex flex-col gap-2">
              {comics?.map((book) => {
                 const isMissingFile = !book.fileHandle;
                 const folderName = folders?.find(f => f.id === book.folderId)?.name || "Uncategorized";
-                
                 return (
                   <div 
                     key={book.id}
@@ -519,7 +514,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                            </div>
                         </div>
                      </div>
-                     
                      <div className="flex items-center gap-2">
                         <button 
                             onClick={(e) => { e.stopPropagation(); setBookToMove(book); setShowMoveModal(true); }}
@@ -548,7 +542,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         </div>
       )}
 
-      {/* --- MODAL: MOVE BOOK (REQ 1) --- */}
+      {/* MOVE BOOK MODAL */}
       {showMoveModal && bookToMove && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setShowMoveModal(false)}>
            <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
@@ -576,7 +570,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                  ))}
               </div>
 
-              {/* Create New Folder inside Modal */}
               <div className="pt-4 border-t border-gray-800">
                  <div className="text-xs text-gray-500 mb-2 uppercase font-bold">Or Create New Category</div>
                  <div className="flex gap-2">
