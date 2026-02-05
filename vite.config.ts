@@ -18,6 +18,26 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      // TAMBAHAN BARU UNTUK MENGATASI WARNING SIZE
+      build: {
+        chunkSizeWarningLimit: 1000, // Naikkan batas warning jadi 1MB
+        rollupOptions: {
+            output: {
+                manualChunks(id) {
+                    if (id.includes('node_modules')) {
+                        // Pisahkan PDF.js karena dia paling besar
+                        if (id.includes('pdfjs-dist')) {
+                            return 'pdf-lib';
+                        }
+                        // Pisahkan library UI lainnya
+                        if (id.includes('react') || id.includes('framer-motion')) {
+                            return 'vendor-ui';
+                        }
+                    }
+                }
+            }
+        }
       }
     };
 });
