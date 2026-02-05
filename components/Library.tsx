@@ -8,7 +8,7 @@ import {
   FiPlus, FiBookOpen, FiTrash2, FiUploadCloud, FiFileText, 
   FiFolder, FiMenu, FiX, FiLogOut, FiUser, FiAlertCircle, 
   FiRefreshCw, FiLock, FiGrid, FiList, FiMoreVertical, FiCheck,
-  FiCalendar, FiType // Icon baru untuk Sort
+  FiCalendar, FiType, FiLayers // Icon baru untuk Auto Organize
 } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { AuthModal } from './AuthModal';
@@ -50,7 +50,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
 
   // --- UI STATE ---
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
-  const [sortBy, setSortBy] = useState<'date' | 'name'>('date'); // NEW: Sort State
+  const [sortBy, setSortBy] = useState<'date' | 'name'>('date');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   
   // --- FOLDER STATE ---
@@ -69,25 +69,21 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     return db.folders.toArray();
   }, [user]);
 
-  // NEW: Query yang menyesuaikan sorting
   const comics = useLiveQuery(async () => {
     if (!user) return [];
     
     let collection;
-    
-    // Tentukan metode sorting
     if (sortBy === 'name') {
-        collection = db.comics.orderBy('title'); // A-Z
+        collection = db.comics.orderBy('title');
     } else {
-        collection = db.comics.orderBy('dateAdded').reverse(); // Newest First (Default)
+        collection = db.comics.orderBy('dateAdded').reverse();
     }
 
-    // Filter folder (Dexie butuh filter manual setelah sort jika index kompleks)
     if (activeFolderId !== null) {
       return (await collection.toArray()).filter(c => c.folderId === activeFolderId);
     }
     return collection.toArray();
-  }, [activeFolderId, user, sortBy]); // Tambahkan sortBy ke dependency
+  }, [activeFolderId, user, sortBy]);
 
   // --- SYNC LOGIC ---
   useEffect(() => {
@@ -159,6 +155,48 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
              folder_id: targetFolder?.supabaseId || null 
            }).match({ id: book.supabaseId });
         }
+    }
+  };
+
+  // --- NEW FEATURE: AUTO ORGANIZE ---
+  const handleAutoOrganize = async () => {
+    if (!confirm("Auto organize comics? Files containing folder names will be moved automatically.")) return;
+    
+    setIsProcessing(true);
+    try {
+        const allFolders = await db.folders.toArray();
+        const allComics = await db.comics.toArray();
+        let movedCount = 0;
+
+        for (const folder of allFolders) {
+            // Case-insensitive check
+            const folderNameLower = folder.name.toLowerCase();
+            
+            // Cari komik yang judulnya mengandung nama folder
+            // DAN belum ada di folder tersebut (atau folder lain)
+            const matches = allComics.filter(c => 
+                c.folderId !== folder.id && 
+                c.title.toLowerCase().includes(folderNameLower)
+            );
+
+            for (const comic of matches) {
+                // Pindahkan ke folder
+                await assignBookToFolder(comic.id!, folder.id!);
+                movedCount++;
+            }
+        }
+        
+        if (movedCount > 0) {
+            alert(`Success! ${movedCount} comics organized into folders.`);
+        } else {
+            alert("No matching comics found to organize.");
+        }
+        
+    } catch (err) {
+        console.error("Auto organize error:", err);
+        alert("Failed to auto organize.");
+    } finally {
+        setIsProcessing(false);
     }
   };
 
@@ -369,23 +407,35 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
             </div>
           ))}
 
-          {showFolderInput ? (
-             <div className="px-3 py-2">
-               <input 
-                 autoFocus
-                 className="w-full bg-gray-800 rounded px-2 py-1 text-sm text-white border border-blue-500 outline-none"
-                 value={newFolderName}
-                 onChange={(e) => setNewFolderName(e.target.value)}
-                 onBlur={() => !newFolderName && setShowFolderInput(false)}
-                 onKeyDown={(e) => e.key === 'Enter' && addFolder()}
-                 placeholder="Folder name..."
-               />
-             </div>
-          ) : (
-            <button onClick={() => setShowFolderInput(true)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 hover:text-white transition-colors">
-              <FiPlus /> New Folder
-            </button>
-          )}
+          {/* New Auto Manage & Create Folder Section */}
+          <div className="pt-2 border-t border-gray-800 mt-2 space-y-1">
+              <button 
+                onClick={handleAutoOrganize}
+                disabled={isProcessing}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-blue-400 hover:text-blue-300 hover:bg-gray-800/50 transition-colors rounded-lg"
+                title="Automatically move files to folders if title contains folder name"
+              >
+                <FiLayers /> Auto Organize
+              </button>
+
+              {showFolderInput ? (
+                 <div className="px-3">
+                   <input 
+                     autoFocus
+                     className="w-full bg-gray-800 rounded px-2 py-1 text-sm text-white border border-blue-500 outline-none"
+                     value={newFolderName}
+                     onChange={(e) => setNewFolderName(e.target.value)}
+                     onBlur={() => !newFolderName && setShowFolderInput(false)}
+                     onKeyDown={(e) => e.key === 'Enter' && addFolder()}
+                     placeholder="Folder name..."
+                   />
+                 </div>
+              ) : (
+                <button onClick={() => setShowFolderInput(true)} className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 hover:text-white transition-colors">
+                  <FiPlus /> New Folder
+                </button>
+              )}
+          </div>
         </div>
 
         {/* SIDEBAR FOOTER (User Info & Logout) */}
@@ -419,7 +469,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           <div className="flex items-center gap-3">
              {isSyncing && <FiRefreshCw className="animate-spin text-blue-400" />}
              
-             {/* NEW: Sort & View Controls */}
+             {/* Sort & View Controls */}
              <div className="flex bg-gray-800 rounded-lg p-1">
                 {/* Sort Toggle */}
                 <button 
