@@ -8,4 +8,6 @@ if (!supabaseUrl || !supabaseKey) {
   throw new Error("Supabase URL atau Key belum diset di .env.local");
 }
 
+
+
 export const supabase = createClient(supabaseUrl, supabaseKey);

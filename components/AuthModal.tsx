@@ -21,9 +21,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
 
     try {
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-        alert('Cek email kamu untuk konfirmasi pendaftaran!');
+        
+        // Jika auto-confirm aktif, data.session akan langsung ada
+        if (data.session) {
+            onClose(); // Langsung tutup modal, user sudah login
+        } else {
+            // Jaga-jaga jika setting confirm email masih nyala
+            alert('Cek email kamu untuk konfirmasi pendaftaran!');
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
