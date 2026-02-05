@@ -8,11 +8,14 @@ import {
   FiPlus, FiBookOpen, FiTrash2, FiUploadCloud, FiFileText, 
   FiFolder, FiMenu, FiX, FiLogOut, FiUser, FiAlertCircle, 
   FiRefreshCw, FiLock, FiGrid, FiList, FiMoreVertical, FiCheck,
-  FiCalendar, FiType, FiLayers, FiCheckSquare, FiSquare // Icons baru
+  FiCalendar, FiType, FiLayers, FiCheckSquare, FiSquare, FiInbox, FiLogIn
 } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { AuthModal } from './AuthModal';
 import { supabase } from '../services/supabaseClient';
+
+// ID Khusus untuk view Uncategorized (agar beda dengan null/All)
+const UNCATEGORIZED_VIEW_ID = -1;
 
 interface LibraryProps {
   onSelectBook: (book: ComicBook, currentList: ComicBook[]) => void;
@@ -48,34 +51,34 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const [dragActive, setDragActive] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // --- GUEST MODE STATE (REQ 1) ---
+  const [isGuestMode, setIsGuestMode] = useState(false);
+
   // --- UI STATE ---
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [sortBy, setSortBy] = useState<'date' | 'name'>('date');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   
   // --- FOLDER & SELECTION STATE ---
+  // null = All, -1 = Uncategorized, number = Folder ID
   const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
   const [showFolderInput, setShowFolderInput] = useState(false);
   
-  // Fitur #2: Selection State
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedBookIds, setSelectedBookIds] = useState<number[]>([]);
 
   // --- MOVE BOOK STATE ---
-  const [bookToMove, setBookToMove] = useState<ComicBook | null>(null); // For single move via menu
+  const [bookToMove, setBookToMove] = useState<ComicBook | null>(null);
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [quickNewFolderName, setQuickNewFolderName] = useState("");
 
   // --- QUERY DATA ---
   const folders = useLiveQuery(async () => {
-    if (!user) return [];
     return db.folders.toArray();
-  }, [user]);
+  }, []);
 
   const comics = useLiveQuery(async () => {
-    if (!user) return [];
-    
     let collection;
     if (sortBy === 'name') {
         collection = db.comics.orderBy('title');
@@ -84,14 +87,23 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     }
 
     const all = await collection.toArray();
-    if (activeFolderId !== null) {
-      return all.filter(c => c.folderId === activeFolderId);
+
+    // Logic Filtering Folder
+    if (activeFolderId === null) {
+        // Show ALL
+        return all;
+    } else if (activeFolderId === UNCATEGORIZED_VIEW_ID) {
+        // REQ 2: Show Uncategorized Only
+        return all.filter(c => !c.folderId);
+    } else {
+        // Show Specific Folder
+        return all.filter(c => c.folderId === activeFolderId);
     }
-    return all;
-  }, [activeFolderId, user, sortBy]);
+  }, [activeFolderId, sortBy]); // Removed user dependecy to allow guest
 
   // --- SYNC LOGIC ---
   useEffect(() => {
+    // Sync hanya jalan jika User Login (Bukan Guest)
     if (user) syncFromCloud();
   }, [user]);
 
@@ -99,7 +111,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     if (!user) return;
     setIsSyncing(true);
     try {
-      // (Kode Sync Folders & Comics sama seperti sebelumnya, disingkat untuk hemat tempat)
       const { data: cloudFolders } = await supabase.from('folders').select('*');
       if (cloudFolders) {
         for (const cf of cloudFolders) {
@@ -139,28 +150,17 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
 
   // --- ACTIONS ---
 
-  // Helper untuk memindahkan buku (support single ID atau array IDs)
   const assignBooksToFolder = async (bookIds: number[], folderId: number | null) => {
     if (bookIds.length === 0) return;
 
-    // 1. Update Dexie (Local)
     for (const id of bookIds) {
-        // Hapus folderId jika null (Uncategorized), atau set folderId
+        // folderId null artinya hapus kategori (Uncategorized)
         const updateData: any = folderId === null ? { folderId: undefined } : { folderId };
-        
-        // Dexie hack untuk menghapus properti: replace undefined dengan delete operation kalau diperlukan, 
-        // tapi dexie biasanya handle undefined update sebagai no-op atau replace. 
-        // Cara paling aman untuk 'unset' adalah update dengan key tersebut.
-        // Di TS + Dexie, undefined kadang tidak ter-update. 
-        // Kita gunakan update standard.
         await db.comics.update(id, updateData as any);
     }
 
-    // 2. Update Supabase (Cloud)
     if (user) {
         const targetFolder = folderId ? await db.folders.get(folderId) : null;
-        
-        // Ambil supabaseId untuk semua buku yang dipindah
         const books = await db.comics.where('id').anyOf(bookIds).toArray();
         const validBooks = books.filter(b => b.supabaseId);
 
@@ -171,12 +171,10 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         }
     }
     
-    // Reset selection setelah move
     setSelectedBookIds([]);
     setSelectionMode(false);
   };
 
-  // --- FITUR #1: AUTO MANAGE (LOGIKA BARU) ---
   const handleAutoOrganize = async () => {
     if (!confirm("Auto organize? Only uncategorized files matching folder names will be moved.")) return;
     
@@ -188,11 +186,8 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
 
         for (const folder of allFolders) {
             const folderNameLower = folder.name.toLowerCase();
-            
-            // Logika: Judul mengandung nama folder (case-insensitive)
-            // DAN (Fitur #3) File belum masuk kategori manapun (!c.folderId)
             const matches = allComics.filter(c => 
-                !c.folderId && // Hanya yang belum punya kategori
+                !c.folderId && 
                 c.title.toLowerCase().includes(folderNameLower)
             );
 
@@ -211,7 +206,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     }
   };
 
-  // --- SELECTION HANDLERS ---
   const toggleSelection = (id: number) => {
     setSelectedBookIds(prev => 
         prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
@@ -219,63 +213,54 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   };
 
   const handleCardClick = (e: React.MouseEvent, book: ComicBook) => {
-    // Jika sedang mode seleksi atau user menekan Ctrl/Command
     if (selectionMode || e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         if (!selectionMode) setSelectionMode(true);
         toggleSelection(book.id!);
     } else {
-        // Buka Buku (Normal Click)
-        // Pass context list ke App agar Reader tahu next/prev
+        // Pastikan kirim list komik yang sudah difilter/sort untuk navigasi reader
         onSelectBook(book, comics || []);
     }
   };
 
-  // --- DRAG & DROP HANDLERS ---
-  
-  // Drag Mulai: Bawa data ID
   const handleDragStart = (e: React.DragEvent, bookId: number) => {
     let idsToDrag = [bookId];
-    
-    // Fitur #2: Jika yang didrag adalah bagian dari seleksi, bawa semua yang terseleksi
     if (selectedBookIds.includes(bookId)) {
         idsToDrag = selectedBookIds;
     }
-
     e.dataTransfer.setData("bookIds", JSON.stringify(idsToDrag));
     e.dataTransfer.effectAllowed = "move";
   };
 
-  // Drop ke Folder (Sidebar)
-  const handleDropToFolder = (e: React.DragEvent, folderId: number | null) => {
+  const handleDropToFolder = (e: React.DragEvent, targetFolderId: number | null) => {
     e.preventDefault(); e.stopPropagation();
     const data = e.dataTransfer.getData("bookIds");
     if (!data) return;
     
     try {
         const ids = JSON.parse(data) as number[];
-        assignBooksToFolder(ids, folderId);
+        // targetFolderId null di sini artinya "Uncategorized" (Hapus Folder)
+        // Fungsi assignBooksToFolder menerima null sebagai "remove folder"
+        assignBooksToFolder(ids, targetFolderId === UNCATEGORIZED_VIEW_ID ? null : targetFolderId);
     } catch (err) {
         console.error("Invalid drag data", err);
     }
   };
 
-  // ... (Sisa fungsi addFolder, deleteFolder, deleteBook, processFiles sama seperti sebelumnya)
-  // Untuk menghemat tempat saya tulis placeholder pemanggilan fungsi existing
-  const addFolder = async (customName?: string) => { /* Logic Sama */ 
-      const name = customName || newFolderName;
-      if(!name.trim()) return null;
-      const id = await db.folders.add({ name });
-      let supabaseId;
-      if(user) {
-          const {data} = await supabase.from('folders').insert({user_id:user.id, name}).select().single();
-          if(data) { supabaseId = data.id; await db.folders.update(id, {supabaseId: data.id}); }
-      }
-      setNewFolderName(""); setShowFolderInput(false);
-      return {id, supabaseId};
+  const addFolder = async (customName?: string) => {
+    const name = customName || newFolderName;
+    if(!name.trim()) return null;
+    const id = await db.folders.add({ name });
+    let supabaseId;
+    if(user) {
+        const {data} = await supabase.from('folders').insert({user_id:user.id, name}).select().single();
+        if(data) { supabaseId = data.id; await db.folders.update(id, {supabaseId: data.id}); }
+    }
+    setNewFolderName(""); setShowFolderInput(false);
+    return {id, supabaseId};
   };
-  const deleteFolder = async (id: number, supabaseId?: number) => { /* Logic Sama */ 
+
+  const deleteFolder = async (id: number, supabaseId?: number) => {
       if(confirm("Delete folder?")) {
           await db.comics.where('folderId').equals(id).modify({folderId: undefined});
           await db.folders.delete(id);
@@ -283,15 +268,17 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           if(activeFolderId===id) setActiveFolderId(null);
       }
   };
-  const deleteBook = async (e: React.MouseEvent, book: ComicBook) => { /* Logic Sama */ 
+
+  const deleteBook = async (e: React.MouseEvent, book: ComicBook) => {
       e.stopPropagation();
       if(confirm("Delete comic?")) {
           if(book.id) await db.comics.delete(book.id);
           if(user && book.supabaseId) await supabase.from('comics').delete().match({id: book.supabaseId});
       }
   };
-  const processFiles = async (files: FileList | File[]) => { /* Logic Sama */ 
-      if(!user) { setShowAuthModal(true); return; }
+
+  const processFiles = async (files: FileList | File[]) => {
+      // Guest boleh upload (lokal), User boleh upload (sync)
       setIsProcessing(true);
       try {
           for(let i=0; i<files.length; i++) {
@@ -300,13 +287,22 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
               if(['cbz','pdf'].includes(ext)) {
                   const cover = await extractCover(file, ext);
                   const title = file.name.replace(/\.(cbz|pdf)$/i, '');
+                  
+                  // Tentukan folder saat upload
+                  // Jika sedang di view Uncategorized (-1), set undefined
+                  // Jika sedang di view All (null), set undefined
+                  // Jika sedang di folder tertentu, set ID folder itu
+                  const targetFolder = (activeFolderId && activeFolderId !== UNCATEGORIZED_VIEW_ID) ? activeFolderId : undefined;
+
                   const newId = await db.comics.add({
                       title, fileHandle: file, coverBlob: cover, format: ext as any,
-                      totalPages: 0, lastReadPage: 0, dateAdded: Date.now(), folderId: activeFolderId || undefined
+                      totalPages: 0, lastReadPage: 0, dateAdded: Date.now(), 
+                      folderId: targetFolder
                   });
+
                   if(user) {
                       let cfId = null; 
-                      if(activeFolderId) { const f = await db.folders.get(activeFolderId); cfId = f?.supabaseId; }
+                      if(targetFolder) { const f = await db.folders.get(targetFolder); cfId = f?.supabaseId; }
                       const {data} = await supabase.from('comics').insert({
                           user_id: user.id, title, original_filename: file.name, format: ext, folder_id: cfId
                       }).select().single();
@@ -329,8 +325,43 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     }
   };
 
-  if (!user) return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white"><Button onClick={() => setShowAuthModal(true)}>Login</Button>{showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}</div>;
+  // --- RENDER LOGIN / GUEST SCREEN (REQ 1) ---
+  if (!user && !isGuestMode) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 p-4 relative overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 opacity-20">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600 rounded-full blur-[100px]"></div>
+        </div>
+        <div className="z-10 text-center max-w-md w-full bg-black/40 backdrop-blur-lg p-8 rounded-2xl border border-white/10 shadow-2xl">
+          <div className="mb-6 flex justify-center">
+             <div className="p-4 bg-blue-500/10 rounded-full border border-blue-500/20">
+                <FiLock className="text-4xl text-blue-400" />
+             </div>
+          </div>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent mb-2">
+            ZenReader
+          </h1>
+          <p className="text-gray-400 mb-8">
+            Login to sync your library across devices, or continue locally as a guest.
+          </p>
+          <div className="space-y-3">
+            <Button onClick={() => setShowAuthModal(true)} className="w-full justify-center py-3 text-lg">
+                <span className="flex items-center gap-2"><FiUser /> Login / Register</span>
+            </Button>
+            <button 
+                onClick={() => setIsGuestMode(true)}
+                className="w-full py-3 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors text-sm"
+            >
+                Continue as Guest (Local Only)
+            </button>
+          </div>
+        </div>
+        {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+      </div>
+    );
+  }
 
+  // --- MAIN LIBRARY VIEW ---
   return (
     <div 
       className={`min-h-screen flex relative transition-colors duration-200 ${dragActive ? 'bg-blue-900/20' : 'bg-gray-900'}`}
@@ -353,15 +384,30 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         </div>
         
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {/* ALL COMICS */}
           <button 
             onClick={() => setActiveFolderId(null)}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => handleDropToFolder(e, null)}
+            // Drop to All does nothing special (keeps current folder) or could create confusion.
+            // Let's allow drop to "Uncategorized" explicitly below.
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${activeFolderId === null ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800'}`}
           >
             <FiBookOpen /> All Comics
           </button>
 
+          {/* REQ 2: UNCATEGORIZED FOLDER */}
+          <button 
+            onClick={() => setActiveFolderId(UNCATEGORIZED_VIEW_ID)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => handleDropToFolder(e, UNCATEGORIZED_VIEW_ID)} // Drop here removes category
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${activeFolderId === UNCATEGORIZED_VIEW_ID ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800'}`}
+          >
+            <FiInbox /> Uncategorized
+          </button>
+
+          {/* USER FOLDERS */}
+          <div className="mt-4 mb-2 px-3 text-xs font-bold text-gray-500 uppercase tracking-wider">Folders</div>
+          
           {folders?.map(folder => (
             <div 
               key={folder.id}
@@ -387,9 +433,20 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
               )}
           </div>
         </div>
+
+        {/* SIDEBAR FOOTER */}
         <div className="p-4 border-t border-gray-800 bg-gray-900/50 mt-auto">
-           <div className="flex items-center gap-3 mb-3 px-1"><div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-xs font-bold">{user.email?.charAt(0).toUpperCase()}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-white truncate">{user.email}</p></div></div>
-           <Button onClick={() => signOut()} className="w-full justify-center !bg-red-500/10 !text-red-400 hover:!bg-red-500/20 border border-red-500/20 text-sm py-1.5"><span className="flex items-center gap-2"><FiLogOut /> Logout</span></Button>
+           {user ? (
+               <>
+                <div className="flex items-center gap-3 mb-3 px-1"><div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-xs font-bold">{user.email?.charAt(0).toUpperCase()}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-white truncate">{user.email}</p></div></div>
+                <Button onClick={() => signOut()} className="w-full justify-center !bg-red-500/10 !text-red-400 hover:!bg-red-500/20 border border-red-500/20 text-sm py-1.5"><span className="flex items-center gap-2"><FiLogOut /> Logout</span></Button>
+               </>
+           ) : (
+               <>
+                <div className="flex items-center gap-3 mb-3 px-1"><div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400">G</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-gray-300">Guest Mode</p><p className="text-xs text-gray-600">Local Storage Only</p></div></div>
+                <Button onClick={() => setShowAuthModal(true)} className="w-full justify-center !bg-blue-600/10 !text-blue-400 hover:!bg-blue-600/20 border border-blue-500/20 text-sm py-1.5"><span className="flex items-center gap-2"><FiLogIn /> Login to Sync</span></Button>
+               </>
+           )}
         </div>
       </aside>
 
@@ -398,7 +455,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           <div className="flex items-center gap-4">
             <button onClick={() => setSidebarOpen(true)} className="md:hidden text-2xl text-white"><FiMenu /></button>
             <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent truncate max-w-[150px] md:max-w-none">
-              {activeFolderId ? folders?.find(f => f.id === activeFolderId)?.name : 'ZenReader'}
+              {activeFolderId === null ? 'All Comics' : activeFolderId === UNCATEGORIZED_VIEW_ID ? 'Uncategorized' : folders?.find(f => f.id === activeFolderId)?.name || 'Library'}
             </h1>
           </div>
 
@@ -406,7 +463,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
              {isSyncing && <FiRefreshCw className="animate-spin text-blue-400" />}
              
              <div className="flex bg-gray-800 rounded-lg p-1">
-                {/* Toggle Selection Mode */}
                 <button 
                    onClick={() => { setSelectionMode(!selectionMode); setSelectedBookIds([]); }}
                    className={`p-2 rounded flex items-center gap-1 border-r border-gray-700 mr-1 pr-3 ${selectionMode ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
@@ -503,7 +559,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
            <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
               <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-white">Move "{bookToMove.title}" to...</h3><button onClick={() => setShowMoveModal(false)}><FiX className="text-gray-400" /></button></div>
               <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
-                 <button onClick={() => { assignBooksToFolder([bookToMove.id!], null); setShowMoveModal(false); }} className="w-full text-left px-3 py-2 rounded hover:bg-gray-800 text-gray-300 flex items-center gap-2"><FiFolder className="text-gray-500" /> Uncategorized</button>
+                 <button onClick={() => { assignBooksToFolder([bookToMove.id!], null); setShowMoveModal(false); }} className="w-full text-left px-3 py-2 rounded hover:bg-gray-800 text-gray-300 flex items-center gap-2"><FiInbox className="text-gray-500" /> Uncategorized</button>
                  {folders?.map(f => (<button key={f.id} onClick={() => { assignBooksToFolder([bookToMove.id!], f.id!); setShowMoveModal(false); }} className="w-full text-left px-3 py-2 rounded hover:bg-gray-800 text-gray-300 flex items-center gap-2"><FiFolder className="text-blue-500" /> {f.name} {bookToMove.folderId === f.id && <FiCheck className="ml-auto text-green-500" />}</button>))}
               </div>
               <div className="pt-4 border-t border-gray-800">

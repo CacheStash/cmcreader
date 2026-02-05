@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ComicBook, ReaderMode } from '../types';
 import { parseCBZ, parsePDF } from '../services/fileUtils';
@@ -8,7 +8,6 @@ import { FiArrowLeft, FiColumns, FiMaximize, FiArrowDown, FiZoomIn, FiZoomOut, F
 interface ReaderProps {
   book: ComicBook;
   onClose: () => void;
-  // Fitur #5: Navigasi Chapter
   onNextChapter?: () => void;
   onPrevChapter?: () => void;
   hasNext?: boolean;
@@ -25,11 +24,20 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
   const [tempPageInput, setTempPageInput] = useState("");
   const [controlsVisible, setControlsVisible] = useState(true);
 
+  // Drag Scrolling State
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [startY, setStartY] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+
+  // Refs for page jumping in vertical mode
+  const pageRefs = useRef<(HTMLImageElement | null)[]>([]);
+
   useEffect(() => {
     const loadBook = async () => {
       setLoading(true);
-      setPages([]); // Reset pages saat buku ganti
-      setCurrentPage(book.lastReadPage || 0); // Reset page ke last read buku baru
+      setPages([]); 
+      setCurrentPage(book.lastReadPage || 0); 
       try {
         let extractedPages: string[] = [];
         if (book.format === 'cbz') extractedPages = await parseCBZ(book.fileHandle!);
@@ -39,30 +47,97 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
       finally { setLoading(false); }
     };
     if (book.fileHandle) loadBook();
-  }, [book]); // Reload saat prop 'book' berubah
+  }, [book]);
 
   useEffect(() => { if (book.id) db.comics.update(book.id, { lastReadPage: currentPage }); }, [currentPage, book.id]);
+
+  // Sync Current Page while scrolling (Vertical Mode)
+  useEffect(() => {
+    if (readerMode !== ReaderMode.VERTICAL || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const index = Number(entry.target.getAttribute('data-index'));
+            setCurrentPage(index);
+          }
+        });
+      },
+      { threshold: 0.5 }
+    );
+
+    pageRefs.current.forEach((img) => {
+      if (img) observer.observe(img);
+    });
+
+    return () => observer.disconnect();
+  }, [pages, readerMode, loading]);
+
+  // Navigation Logic
+  const nextPage = useCallback(() => {
+    if (readerMode === ReaderMode.VERTICAL) return;
+    
+    const increment = readerMode === ReaderMode.DOUBLE ? 2 : 1;
+    
+    if (currentPage + increment >= pages.length) {
+       if (hasNext) onNextChapter?.();
+    } else {
+       setCurrentPage(p => p + increment);
+    }
+  }, [pages.length, readerMode, currentPage, hasNext, onNextChapter]);
+
+  const prevPage = useCallback(() => {
+    if (readerMode === ReaderMode.VERTICAL) return;
+
+    const decrement = readerMode === ReaderMode.DOUBLE && currentPage > 1 ? 2 : 1;
+    
+    if (currentPage === 0) {
+        if (hasPrev) onPrevChapter?.();
+    } else {
+        setCurrentPage(p => Math.max(p - decrement, 0));
+    }
+  }, [currentPage, readerMode, hasPrev, onPrevChapter]);
 
   const handlePageJump = (e: React.FormEvent) => {
     e.preventDefault();
     const pageNum = parseInt(tempPageInput);
-    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= pages.length) setCurrentPage(pageNum - 1);
+    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= pages.length) {
+        const targetIndex = pageNum - 1;
+        
+        if (readerMode === ReaderMode.VERTICAL) {
+            pageRefs.current[targetIndex]?.scrollIntoView({ behavior: 'smooth' });
+            setCurrentPage(targetIndex);
+        } else {
+            setCurrentPage(targetIndex);
+        }
+    }
     setTempPageInput("");
   };
 
-  const nextPage = useCallback(() => {
-    if (readerMode === ReaderMode.VERTICAL) return;
-    const increment = readerMode === ReaderMode.DOUBLE ? 2 : 1;
-    setCurrentPage(p => Math.min(p + increment, pages.length - 1));
-  }, [pages.length, readerMode]);
+  // Drag Handlers
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (readerMode !== ReaderMode.VERTICAL) return;
+    setIsDragging(true);
+    setStartY(e.pageY - (containerRef.current?.offsetTop || 0));
+    setScrollTop(containerRef.current?.scrollTop || 0);
+  };
 
-  const prevPage = useCallback(() => {
-    if (readerMode === ReaderMode.VERTICAL) return;
-    const decrement = readerMode === ReaderMode.DOUBLE && currentPage > 1 ? 2 : 1;
-    setCurrentPage(p => Math.max(p - decrement, 0));
-  }, [currentPage, readerMode]);
+  const onMouseLeave = () => setIsDragging(false);
+  const onMouseUp = () => setIsDragging(false);
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || readerMode !== ReaderMode.VERTICAL) return;
+    e.preventDefault();
+    const y = e.pageY - (containerRef.current?.offsetTop || 0);
+    const walk = (y - startY) * 1.5;
+    if (containerRef.current) {
+        containerRef.current.scrollTop = scrollTop - walk;
+    }
+  };
 
   const adjustZoom = (delta: number) => setZoom(prev => Math.max(50, Math.min(300, prev + delta)));
+  
   const getVisiblePages = () => {
     if (readerMode === ReaderMode.SINGLE || currentPage === 0) return [currentPage];
     const secondPage = currentPage + 1 < pages.length ? currentPage + 1 : null;
@@ -73,8 +148,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
 
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col">
-      
-      {/* Fitur #4: Transparent Close Button (Top Right) */}
       <button 
         onClick={onClose} 
         className="absolute top-4 right-4 z-50 p-3 bg-black/50 hover:bg-red-600/80 text-white rounded-full transition-colors backdrop-blur-sm"
@@ -83,13 +156,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
         <FiX size={24} />
       </button>
 
-      {/* Top Bar */}
       <motion.div 
         animate={{ y: controlsVisible ? 0 : -100 }}
         className="absolute top-0 w-full h-16 bg-black/90 flex items-center justify-between px-4 z-30"
       >
         <button onClick={onClose} className="p-2 text-white hover:bg-gray-800 rounded-full"><FiArrowLeft /></button>
-        <div className="flex gap-4 items-center mr-12"> {/* mr-12 biar ga nabrak tombol close */}
+        <div className="flex gap-4 items-center mr-12">
             <div className="flex items-center gap-2 bg-gray-800 rounded px-2 py-1">
                 <button onClick={() => adjustZoom(-10)} className="text-white"><FiZoomOut /></button>
                 <span className="text-xs text-white w-8 text-center">{zoom}%</span>
@@ -101,15 +173,29 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
         </div>
       </motion.div>
 
-      {/* Main Reader Area */}
       <div 
-        className={`flex-1 w-full relative overflow-hidden ${readerMode === ReaderMode.VERTICAL ? 'overflow-y-auto' : 'flex items-center justify-center'}`}
-        onClick={() => setControlsVisible(!controlsVisible)}
+        ref={containerRef}
+        className={`flex-1 w-full relative overflow-hidden ${readerMode === ReaderMode.VERTICAL ? 'overflow-y-auto cursor-grab active:cursor-grabbing' : 'flex items-center justify-center'}`}
+        onClick={() => !isDragging && setControlsVisible(!controlsVisible)}
+        onMouseDown={onMouseDown}
+        onMouseLeave={onMouseLeave}
+        onMouseUp={onMouseUp}
+        onMouseMove={onMouseMove}
       >
         {readerMode === ReaderMode.VERTICAL ? (
           <div className="flex flex-col items-center w-full min-h-screen py-20 gap-2">
             {pages.map((src, idx) => (
-              <img key={idx} src={src} alt={`Page ${idx}`} style={{ width: `${zoom}%`, maxWidth: 'none' }} className="shadow-xl" />
+              <img 
+                key={idx} 
+                // FIX: Use curly braces to avoid returning the element
+                ref={el => { pageRefs.current[idx] = el; }} 
+                data-index={idx}
+                src={src} 
+                alt={`Page ${idx}`} 
+                style={{ width: `${zoom}%`, maxWidth: 'none' }} 
+                className="shadow-xl select-none"
+                draggable={false}
+              />
             ))}
           </div>
         ) : (
@@ -123,7 +209,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
         )}
       </div>
 
-      {/* Fitur #5: Next / Prev Chapter Buttons (Bottom Corners) */}
       <div className="absolute bottom-20 w-full px-4 flex justify-between pointer-events-none z-40">
          {hasPrev && (
              <button 
@@ -133,7 +218,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
                 <FiChevronLeft className="group-hover:-translate-x-1 transition-transform" /> Prev Chapter
              </button>
          )}
-         <div className="flex-1"></div> {/* Spacer */}
+         <div className="flex-1"></div>
          {hasNext && (
              <button 
                 onClick={(e) => { e.stopPropagation(); onNextChapter?.(); }} 
@@ -144,19 +229,18 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
          )}
       </div>
 
-      {/* Bottom Bar (Page Control) */}
-      {readerMode !== ReaderMode.VERTICAL && (
-        <motion.div 
-          animate={{ y: controlsVisible ? 0 : 100 }}
-          className="absolute bottom-0 w-full h-16 bg-black/90 flex items-center justify-center px-6 z-30 gap-4"
-        >
-          <form onSubmit={handlePageJump} className="flex items-center gap-2">
-            <input type="number" className="w-12 bg-gray-800 text-white text-center rounded" value={tempPageInput || currentPage + 1} onChange={(e) => setTempPageInput(e.target.value)} onFocus={() => setTempPageInput("")} />
-            <span className="text-gray-400 text-sm">/ {pages.length}</span>
-          </form>
-          <input type="range" min={0} max={pages.length - 1} value={currentPage} onChange={(e) => setCurrentPage(parseInt(e.target.value))} className="w-64 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
-        </motion.div>
-      )}
+      <motion.div 
+        animate={{ y: controlsVisible ? 0 : 100 }}
+        className="absolute bottom-0 w-full h-16 bg-black/90 flex items-center justify-center px-6 z-30 gap-4"
+      >
+        <form onSubmit={handlePageJump} className="flex items-center gap-2">
+          <input type="number" className="w-12 bg-gray-800 text-white text-center rounded" value={tempPageInput || currentPage + 1} onChange={(e) => setTempPageInput(e.target.value)} onFocus={() => setTempPageInput("")} />
+          <span className="text-gray-400 text-sm">/ {pages.length}</span>
+        </form>
+        {readerMode !== ReaderMode.VERTICAL && (
+            <input type="range" min={0} max={pages.length - 1} value={currentPage} onChange={(e) => setCurrentPage(parseInt(e.target.value))} className="w-64 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+        )}
+      </motion.div>
 
       {readerMode !== ReaderMode.VERTICAL && (
         <>
