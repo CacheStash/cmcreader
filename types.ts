@@ -5,18 +5,23 @@ export enum ReaderMode {
 }
 
 export interface Folder {
-  id?: number;
+  id?: number;         // ID Lokal (Dexie)
+  supabaseId?: number; // ID Cloud (Supabase)
   name: string;
 }
 
 export interface ComicBook {
-  id?: number;
+  id?: number;         // ID Lokal (Dexie)
+  supabaseId?: number; // ID Cloud (Supabase)
+  
   title: string;
-  fileHandle: File;
+  // fileHandle jadi optional, karena kalau cuma data dari cloud, filenya belum tentu ada di HP
+  fileHandle?: File;   
   coverBlob?: Blob;
+  
   format: 'cbz' | 'pdf';
   totalPages: number;
   lastReadPage: number;
   dateAdded: number;
-  folderId?: number; // Properti baru untuk kategori
+  folderId?: number;   // Referensi ke ID Folder Lokal
 }
