@@ -2,9 +2,9 @@ import React, { useRef, useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { extractCover, getFileExtension } from '../services/fileUtils';
-import { ComicBook } from '../types';
+import { ComicBook, Folder } from '../types';
 import { Button } from './Button';
-import { FiPlus, FiBookOpen, FiTrash2, FiUploadCloud, FiFileText, FiFolder, FiMenu, FiX, FiLogOut, FiUser, FiAlertCircle, FiRefreshCw } from 'react-icons/fi';
+import { FiPlus, FiBookOpen, FiTrash2, FiUploadCloud, FiFileText, FiFolder, FiMenu, FiX, FiLogOut, FiUser, FiAlertCircle, FiRefreshCw, FiLock } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { AuthModal } from './AuthModal';
 import { supabase } from '../services/supabaseClient';
@@ -44,23 +44,29 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   // --- Folder Logic ---
-  const folders = useLiveQuery(() => db.folders.toArray());
   const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [showFolderInput, setShowFolderInput] = useState(false);
 
-  // --- Filter Comics ---
+  // --- QUERY 1: Folders (Hanya tampil jika User Login) ---
+  const folders = useLiveQuery(async () => {
+    if (!user) return []; // REQ 1: Logout = Folder Hilang
+    return db.folders.toArray();
+  }, [user]);
+
+  // --- QUERY 2: Comics (Hanya tampil jika User Login) ---
   const comics = useLiveQuery(async () => {
+    if (!user) return []; // REQ 1: Logout = Komik Hilang
+    
     let collection = db.comics.orderBy('dateAdded').reverse();
     if (activeFolderId !== null) {
       return (await collection.toArray()).filter(c => c.folderId === activeFolderId);
     }
     return collection.toArray();
-  }, [activeFolderId]);
+  }, [activeFolderId, user]);
 
   // --- SYNC LOGIC (The Brain) ---
-  // 1. Sync Down (Cloud -> Local) saat User Login
   useEffect(() => {
     if (user) syncFromCloud();
   }, [user]);
@@ -73,7 +79,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       const { data: cloudFolders } = await supabase.from('folders').select('*');
       if (cloudFolders) {
         for (const cf of cloudFolders) {
-           // Cek apakah folder sudah ada di lokal (by name)
            const exist = await db.folders.where('name').equals(cf.name).first();
            if (!exist) {
              await db.folders.add({ name: cf.name, supabaseId: cf.id });
@@ -87,7 +92,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       const { data: cloudComics } = await supabase.from('comics').select('*');
       if (cloudComics) {
          for (const cc of cloudComics) {
-            // Cek apakah komik sudah ada di lokal (by title/filename)
+            // REQ 2 FIX: Cek apakah file lokal sudah ada berdasarkan JUDUL
             const exist = await db.comics.where('title').equals(cc.title).first();
             
             // Cari Local Folder ID berdasarkan Cloud Folder ID
@@ -98,7 +103,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
             }
 
             if (!exist) {
-               // INSERT CLOUD ONLY ITEM (Tanpa File Handle)
+               // INSERT CLOUD ONLY ITEM (Belum ada file di HP ini)
                await db.comics.add({
                  title: cc.title,
                  format: cc.format as 'pdf' | 'cbz',
@@ -107,10 +112,15 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                  dateAdded: new Date(cc.created_at).getTime(),
                  supabaseId: cc.id,
                  folderId: localFolderId,
-                 // File Handle & Blob Kosong karena belum didownload/matched
+                 // File Handle kosong, nanti user harus upload ulang/match
                });
-            } else if (!exist.supabaseId) {
-               await db.comics.update(exist.id!, { supabaseId: cc.id });
+            } else {
+               // UPDATE ITEM YANG SUDAH ADA
+               // Kita update ID Cloud-nya, TAPI JANGAN TIMPA fileHandle kalau sudah ada!
+               const updateData: any = { supabaseId: cc.id };
+               if (localFolderId) updateData.folderId = localFolderId;
+               
+               await db.comics.update(exist.id!, updateData);
             }
          }
       }
@@ -124,17 +134,14 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const addFolder = async () => {
     if (newFolderName.trim()) {
       const name = newFolderName.trim();
-      // 1. Simpan Lokal
       const id = await db.folders.add({ name });
       
-      // 2. Simpan ke Supabase (Jika Login)
       if (user) {
         const { data, error } = await supabase.from('folders').insert({ user_id: user.id, name }).select().single();
         if (data && !error) {
            await db.folders.update(id, { supabaseId: data.id });
         }
       }
-
       setNewFolderName("");
       setShowFolderInput(false);
     }
@@ -144,45 +151,21 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     if (confirm("Hapus folder ini?")) {
       await db.comics.where('folderId').equals(id).modify({ folderId: undefined });
       await db.folders.delete(id);
-      
-      // Hapus di Cloud juga
       if (user && supabaseId) {
         await supabase.from('folders').delete().match({ id: supabaseId });
       }
-
       if (activeFolderId === id) setActiveFolderId(null);
     }
   };
 
-  const handleDropToFolder = async (e: React.DragEvent, folderId: number | null) => {
-    e.preventDefault(); e.stopPropagation();
-    const bookIdString = e.dataTransfer.getData("bookId");
-    if (!bookIdString) return;
-    
-    const bookId = parseInt(bookIdString);
-    if (bookId) {
-        // Update Lokal
-        if (folderId === null) {
-             await db.comics.update(bookId, { folderId: undefined } as any);
-        } else {
-             await db.comics.update(bookId, { folderId });
-        }
-
-        // Update Cloud (Jika Item & Folder sudah tersinkron)
-        if (user) {
-            const book = await db.comics.get(bookId);
-            const targetFolder = folderId ? await db.folders.get(folderId) : null;
-            
-            if (book?.supabaseId) {
-               await supabase.from('comics').update({ 
-                 folder_id: targetFolder?.supabaseId || null 
-               }).match({ id: book.supabaseId });
-            }
-        }
-    }
-  };
-
   const processFiles = async (files: FileList | File[]) => {
+    // REQ 1: Cegah upload jika belum login (opsional, tapi disarankan agar data rapi)
+    if (!user) {
+        alert("Silakan Login terlebih dahulu untuk menyimpan komik.");
+        setShowAuthModal(true);
+        return;
+    }
+
     setIsProcessing(true);
     try {
       for (let i = 0; i < files.length; i++) {
@@ -193,10 +176,10 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           const coverBlob = await extractCover(file, ext);
           const title = file.name.replace(/\.(cbz|pdf)$/i, '');
           
-          // 1. Simpan Lokal
+          // 1. Simpan Lokal (Beserta File Blob!)
           const newId = await db.comics.add({
             title: title,
-            fileHandle: file,
+            fileHandle: file, // <--- INI PENTING: File Fisik disimpan di Dexie
             coverBlob: coverBlob,
             format: ext as 'cbz' | 'pdf',
             totalPages: 0,
@@ -207,7 +190,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
 
           // 2. Simpan Metadata ke Supabase (Tanpa File)
           if (user) {
-             // Cari Cloud Folder ID kalau sedang di dalam folder
              let cloudFolderId = null;
              if (activeFolderId) {
                 const f = await db.folders.get(activeFolderId);
@@ -252,6 +234,30 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) processFiles(e.dataTransfer.files);
   };
+  
+  const handleDropToFolder = async (e: React.DragEvent, folderId: number | null) => {
+    e.preventDefault(); e.stopPropagation();
+    const bookIdString = e.dataTransfer.getData("bookId");
+    if (!bookIdString) return;
+    
+    const bookId = parseInt(bookIdString);
+    if (bookId) {
+        if (folderId === null) {
+             await db.comics.update(bookId, { folderId: undefined } as any);
+        } else {
+             await db.comics.update(bookId, { folderId });
+        }
+        if (user) {
+            const book = await db.comics.get(bookId);
+            const targetFolder = folderId ? await db.folders.get(folderId) : null;
+            if (book?.supabaseId) {
+               await supabase.from('comics').update({ 
+                 folder_id: targetFolder?.supabaseId || null 
+               }).match({ id: book.supabaseId });
+            }
+        }
+    }
+  };
 
   const deleteBook = async (e: React.MouseEvent, book: ComicBook) => {
     e.stopPropagation();
@@ -263,6 +269,41 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     }
   };
 
+  // --- TAMPILAN KHUSUS LOGOUT ---
+  if (!user) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 p-4 relative overflow-hidden">
+        {/* Background Accent */}
+        <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 opacity-20">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600 rounded-full blur-[100px]"></div>
+        </div>
+
+        <div className="z-10 text-center max-w-md w-full bg-black/40 backdrop-blur-lg p-8 rounded-2xl border border-white/10 shadow-2xl">
+          <div className="mb-6 flex justify-center">
+             <div className="p-4 bg-blue-500/10 rounded-full border border-blue-500/20">
+                <FiLock className="text-4xl text-blue-400" />
+             </div>
+          </div>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent mb-2">
+            ZenReader Cloud
+          </h1>
+          <p className="text-gray-400 mb-8">
+            Library kamu terkunci. Silakan login untuk mengakses koleksi komik dan folder kamu.
+          </p>
+          
+          <Button onClick={() => setShowAuthModal(true)} className="w-full justify-center py-3 text-lg">
+            <span className="flex items-center gap-2">
+              <FiUser /> Login / Register
+            </span>
+          </Button>
+        </div>
+
+        {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+      </div>
+    );
+  }
+
+  // --- TAMPILAN UTAMA (HANYA JIKA USER LOGIN) ---
   return (
     <div 
       className={`min-h-screen flex relative transition-colors duration-200 ${dragActive ? 'bg-blue-900/20' : 'bg-gray-900'}`}
@@ -339,22 +380,15 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           </div>
 
           <div className="flex items-center gap-3">
-             {/* Sync Indicator */}
              {isSyncing && <FiRefreshCw className="animate-spin text-blue-400" />}
-
-             {user ? (
-              <div className="flex items-center gap-3">
+             
+             <div className="flex items-center gap-3">
                 <span className="text-sm text-gray-400 hidden sm:block">{user.email}</span>
                 <Button onClick={() => signOut()} className="!bg-red-500/10 !text-red-400 hover:!bg-red-500/20 shadow-none px-3">
                    <FiLogOut />
                 </Button>
                 <div className="h-6 w-px bg-gray-700 mx-2"></div>
-              </div>
-            ) : (
-               <Button onClick={() => setShowAuthModal(true)} variant="ghost" className="mr-2">
-                 <span className="flex items-center gap-2"><FiUser /> Login</span>
-               </Button>
-            )}
+             </div>
 
             <Button onClick={() => fileInputRef.current?.click()} disabled={isProcessing}>
               <span className="flex items-center gap-2">
@@ -394,7 +428,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
           {comics?.map((book) => {
-            // Cek apakah file fisik tersedia
+            // Cek apakah file fisik tersedia (Blob tersimpan di Dexie)
             const isMissingFile = !book.fileHandle;
             
             return (
@@ -409,12 +443,11 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
               >
                 <CoverImage blob={book.coverBlob} title={book.title} />
                 
-                {/* Overlay jika file hilang */}
                 {isMissingFile && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 p-2 text-center">
                     <FiAlertCircle className="text-3xl text-red-400 mb-2" />
                     <span className="text-xs text-red-200 font-bold">File Not Found</span>
-                    <span className="text-[10px] text-gray-400 mt-1">Available in Cloud</span>
+                    <span className="text-[10px] text-gray-400 mt-1">Re-upload to Sync</span>
                   </div>
                 )}
 
