@@ -48,7 +48,8 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   // --- UI STATE ---
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  // MODIFIED: Default viewMode sekarang 'list'
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   
   // --- FOLDER STATE ---
@@ -375,7 +376,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           )}
         </div>
 
-        {/* REQ: SIDEBAR FOOTER (User Info & Logout) */}
+        {/* SIDEBAR FOOTER (User Info & Logout) */}
         <div className="p-4 border-t border-gray-800 bg-gray-900/50 mt-auto">
            <div className="flex items-center gap-3 mb-3 px-1">
               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-xs font-bold">
