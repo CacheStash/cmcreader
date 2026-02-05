@@ -8,7 +8,7 @@ import {
   FiPlus, FiBookOpen, FiTrash2, FiUploadCloud, FiFileText, 
   FiFolder, FiMenu, FiX, FiLogOut, FiUser, FiAlertCircle, 
   FiRefreshCw, FiLock, FiGrid, FiList, FiMoreVertical, FiCheck,
-  FiCalendar, FiType, FiLayers, FiCheckSquare, FiSquare, FiInbox, FiLogIn
+  FiCalendar, FiType, FiLayers, FiCheckSquare, FiSquare, FiInbox, FiLogIn, FiSearch // Icon Search
 } from 'react-icons/fi';
 import { useAuth } from '../contexts/AuthContext';
 import { AuthModal } from './AuthModal';
@@ -51,16 +51,16 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const [dragActive, setDragActive] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // --- GUEST MODE STATE (REQ 1) ---
+  // --- GUEST MODE STATE ---
   const [isGuestMode, setIsGuestMode] = useState(false);
 
   // --- UI STATE ---
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [sortBy, setSortBy] = useState<'date' | 'name'>('date');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState(""); // NEW: Search State
   
   // --- FOLDER & SELECTION STATE ---
-  // null = All, -1 = Uncategorized, number = Folder ID
   const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
   const [showFolderInput, setShowFolderInput] = useState(false);
@@ -86,24 +86,26 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         collection = db.comics.orderBy('dateAdded').reverse();
     }
 
-    const all = await collection.toArray();
+    let all = await collection.toArray();
+
+    // NEW: Filter Search
+    if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase();
+        all = all.filter(c => c.title.toLowerCase().includes(query));
+    }
 
     // Logic Filtering Folder
     if (activeFolderId === null) {
-        // Show ALL
         return all;
     } else if (activeFolderId === UNCATEGORIZED_VIEW_ID) {
-        // REQ 2: Show Uncategorized Only
         return all.filter(c => !c.folderId);
     } else {
-        // Show Specific Folder
         return all.filter(c => c.folderId === activeFolderId);
     }
-  }, [activeFolderId, sortBy]); // Removed user dependecy to allow guest
+  }, [activeFolderId, sortBy, searchQuery]); // Add searchQuery to dependency
 
   // --- SYNC LOGIC ---
   useEffect(() => {
-    // Sync hanya jalan jika User Login (Bukan Guest)
     if (user) syncFromCloud();
   }, [user]);
 
@@ -154,7 +156,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     if (bookIds.length === 0) return;
 
     for (const id of bookIds) {
-        // folderId null artinya hapus kategori (Uncategorized)
         const updateData: any = folderId === null ? { folderId: undefined } : { folderId };
         await db.comics.update(id, updateData as any);
     }
@@ -218,7 +219,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         if (!selectionMode) setSelectionMode(true);
         toggleSelection(book.id!);
     } else {
-        // Pastikan kirim list komik yang sudah difilter/sort untuk navigasi reader
         onSelectBook(book, comics || []);
     }
   };
@@ -239,8 +239,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     
     try {
         const ids = JSON.parse(data) as number[];
-        // targetFolderId null di sini artinya "Uncategorized" (Hapus Folder)
-        // Fungsi assignBooksToFolder menerima null sebagai "remove folder"
         assignBooksToFolder(ids, targetFolderId === UNCATEGORIZED_VIEW_ID ? null : targetFolderId);
     } catch (err) {
         console.error("Invalid drag data", err);
@@ -278,7 +276,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   };
 
   const processFiles = async (files: FileList | File[]) => {
-      // Guest boleh upload (lokal), User boleh upload (sync)
       setIsProcessing(true);
       try {
           for(let i=0; i<files.length; i++) {
@@ -288,10 +285,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                   const cover = await extractCover(file, ext);
                   const title = file.name.replace(/\.(cbz|pdf)$/i, '');
                   
-                  // Tentukan folder saat upload
-                  // Jika sedang di view Uncategorized (-1), set undefined
-                  // Jika sedang di view All (null), set undefined
-                  // Jika sedang di folder tertentu, set ID folder itu
                   const targetFolder = (activeFolderId && activeFolderId !== UNCATEGORIZED_VIEW_ID) ? activeFolderId : undefined;
 
                   const newId = await db.comics.add({
@@ -325,7 +318,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
     }
   };
 
-  // --- RENDER LOGIN / GUEST SCREEN (REQ 1) ---
+  // --- RENDER LOGIN / GUEST SCREEN ---
   if (!user && !isGuestMode) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 p-4 relative overflow-hidden">
@@ -388,18 +381,16 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           <button 
             onClick={() => setActiveFolderId(null)}
             onDragOver={(e) => e.preventDefault()}
-            // Drop to All does nothing special (keeps current folder) or could create confusion.
-            // Let's allow drop to "Uncategorized" explicitly below.
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${activeFolderId === null ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800'}`}
           >
             <FiBookOpen /> All Comics
           </button>
 
-          {/* REQ 2: UNCATEGORIZED FOLDER */}
+          {/* UNCATEGORIZED FOLDER */}
           <button 
             onClick={() => setActiveFolderId(UNCATEGORIZED_VIEW_ID)}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => handleDropToFolder(e, UNCATEGORIZED_VIEW_ID)} // Drop here removes category
+            onDrop={(e) => handleDropToFolder(e, UNCATEGORIZED_VIEW_ID)}
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${activeFolderId === UNCATEGORIZED_VIEW_ID ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800'}`}
           >
             <FiInbox /> Uncategorized
@@ -451,34 +442,48 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       </aside>
 
       <div className="flex-1 p-6 pb-24 relative z-10 w-full overflow-hidden">
-        <header className="flex justify-between items-center mb-8 sticky top-0 z-20 bg-gray-900/80 backdrop-blur-md py-4">
-          <div className="flex items-center gap-4">
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 sticky top-0 z-20 bg-gray-900/80 backdrop-blur-md py-4 gap-4">
+          <div className="flex items-center gap-4 w-full md:w-auto">
             <button onClick={() => setSidebarOpen(true)} className="md:hidden text-2xl text-white"><FiMenu /></button>
             <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent truncate max-w-[150px] md:max-w-none">
               {activeFolderId === null ? 'All Comics' : activeFolderId === UNCATEGORIZED_VIEW_ID ? 'Uncategorized' : folders?.find(f => f.id === activeFolderId)?.name || 'Library'}
             </h1>
           </div>
 
-          <div className="flex items-center gap-3">
-             {isSyncing && <FiRefreshCw className="animate-spin text-blue-400" />}
+          <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
              
-             <div className="flex bg-gray-800 rounded-lg p-1">
-                <button 
-                   onClick={() => { setSelectionMode(!selectionMode); setSelectedBookIds([]); }}
-                   className={`p-2 rounded flex items-center gap-1 border-r border-gray-700 mr-1 pr-3 ${selectionMode ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
-                   title="Multi Select Mode"
-                >
-                   {selectionMode ? <FiCheckSquare /> : <FiSquare />}
-                   {selectionMode && <span className="text-xs font-bold ml-1">{selectedBookIds.length}</span>}
-                </button>
-
-                <button onClick={() => setSortBy(prev => prev === 'date' ? 'name' : 'date')} className="p-2 rounded text-gray-400 hover:text-white flex items-center gap-1 border-r border-gray-700 mr-1 pr-3">
-                   {sortBy === 'date' ? <FiCalendar /> : <FiType />}
-                   <span className="text-xs font-bold hidden sm:inline">{sortBy === 'date' ? 'Date' : 'A-Z'}</span>
-                </button>
-                <button onClick={() => setViewMode('grid')} className={`p-2 rounded ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}><FiGrid /></button>
-                <button onClick={() => setViewMode('list')} className={`p-2 rounded ${viewMode === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}><FiList /></button>
+             {/* NEW: Search Bar */}
+             <div className="relative w-full md:w-64">
+                <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                <input 
+                    className="w-full bg-gray-800 border border-gray-700 rounded-full py-1.5 pl-9 pr-4 text-sm text-white focus:border-blue-500 outline-none transition-all focus:bg-gray-800/80"
+                    placeholder="Search..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                />
              </div>
+
+             <div className="flex w-full md:w-auto gap-3 justify-end">
+                {isSyncing && <FiRefreshCw className="animate-spin text-blue-400" />}
+                <div className="flex bg-gray-800 rounded-lg p-1">
+                    <button 
+                    onClick={() => { setSelectionMode(!selectionMode); setSelectedBookIds([]); }}
+                    className={`p-2 rounded flex items-center gap-1 border-r border-gray-700 mr-1 pr-3 ${selectionMode ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                    title="Multi Select Mode"
+                    >
+                    {selectionMode ? <FiCheckSquare /> : <FiSquare />}
+                    {selectionMode && <span className="text-xs font-bold ml-1">{selectedBookIds.length}</span>}
+                    </button>
+
+                    <button onClick={() => setSortBy(prev => prev === 'date' ? 'name' : 'date')} className="p-2 rounded text-gray-400 hover:text-white flex items-center gap-1 border-r border-gray-700 mr-1 pr-3">
+                    {sortBy === 'date' ? <FiCalendar /> : <FiType />}
+                    <span className="text-xs font-bold hidden sm:inline">{sortBy === 'date' ? 'Date' : 'A-Z'}</span>
+                    </button>
+                    <button onClick={() => setViewMode('grid')} className={`p-2 rounded ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}><FiGrid /></button>
+                    <button onClick={() => setViewMode('list')} className={`p-2 rounded ${viewMode === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}><FiList /></button>
+                </div>
+             </div>
+             
              <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && processFiles(e.target.files)} className="hidden" accept=".cbz,.pdf,application/pdf,application/vnd.comicbook+zip,application/x-cbz,application/zip,application/x-zip-compressed,multipart/x-zip" multiple />
           </div>
         </header>
@@ -491,7 +496,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
               const isMissingFile = !book.fileHandle;
               const isSelected = selectedBookIds.includes(book.id!);
               
-              // Common Inner Content
               const GridContent = () => (
                 <>
                   <CoverImage blob={book.coverBlob} title={book.title} />
@@ -503,14 +507,12 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                         {book.supabaseId && <span className="text-blue-400 font-bold text-[10px]">SYNCED</span>}
                     </div>
                   </div>
-                  {/* Selection Overlay */}
                   {isSelected && <div className="absolute inset-0 border-4 border-blue-500 rounded-xl z-20 pointer-events-none bg-blue-500/20 flex items-center justify-center"><FiCheck className="text-6xl text-white drop-shadow-lg" /></div>}
                 </>
               );
 
               const ListContent = () => (
                  <div className="flex items-center gap-4 flex-1 min-w-0">
-                    {/* Checkbox for List View */}
                     {selectionMode && <div className={`w-5 h-5 border rounded flex items-center justify-center ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-gray-600'}`}>{isSelected && <FiCheck size={12} />}</div>}
                     <div className="w-10 h-14 bg-gray-900 rounded flex items-center justify-center text-gray-600 shrink-0">{book.format === 'pdf' ? <FiFileText /> : <FiBookOpen />}</div>
                     <div className="flex flex-col min-w-0">
@@ -539,7 +541,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                 >
                   {viewMode === 'grid' ? <GridContent /> : <ListContent />}
                   
-                  {/* Action Buttons (Only show if not in selection mode) */}
                   {!selectionMode && (
                       <div className={viewMode === 'grid' ? "absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-all z-30" : "flex items-center gap-2"}>
                          <button onClick={(e) => { e.stopPropagation(); setBookToMove(book); setShowMoveModal(true); }} className="p-2 text-white bg-gray-900/80 hover:bg-blue-600 rounded-full shadow-lg"><FiMoreVertical size={16} /></button>
