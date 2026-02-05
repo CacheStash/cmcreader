@@ -1,16 +1,22 @@
 export enum ReaderMode {
   SINGLE = 'single',
   DOUBLE = 'double',
-  VERTICAL = 'vertical', // Request #4
+  VERTICAL = 'vertical',
+}
+
+export interface Folder {
+  id?: number;
+  name: string;
 }
 
 export interface ComicBook {
   id?: number;
   title: string;
   fileHandle: File;
-  coverBlob?: Blob; // Request #2: Simpan Blob fisik, bukan string URL sementara
-  format: 'cbz' | 'pdf'; // Request #1: Hapus cbr
+  coverBlob?: Blob;
+  format: 'cbz' | 'pdf';
   totalPages: number;
   lastReadPage: number;
   dateAdded: number;
+  folderId?: number; // Properti baru untuk kategori
 }
