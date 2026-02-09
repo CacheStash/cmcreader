@@ -98,26 +98,40 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook, activeFolderId, 
   }, [activeFolderId]);
 
   const subFolders = useLiveQuery(async () => {
-      const all = await db.folders.toArray();
-      return all.filter(f => {
-          if (activeFolderId === null || activeFolderId === UNCATEGORIZED_VIEW_ID) return !f.parentId; 
-          return f.parentId === activeFolderId;
-      }).sort((a, b) => a.name.localeCompare(b.name));
-  }, [activeFolderId]);
+    const all = await db.folders.toArray();
+    return all.filter(f => {
+        if (activeFolderId === null || activeFolderId === UNCATEGORIZED_VIEW_ID) return !f.parentId; 
+        return f.parentId === activeFolderId;
+    }).sort((a, b) => 
+        // NATURAL SORT: Mengurutkan folder 1, 2, 10
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+    );
+}, [activeFolderId]);
 
-  const comics = useLiveQuery(async () => {
-    let collection = db.comics.orderBy('title'); 
-    let all = await collection.toArray();
+// Library.tsx - Bagian Fetch Comics (Sekitar baris 126-139)
+const comics = useLiveQuery(async () => {
+  // Ambil semua data terlebih dahulu
+  let all = await db.comics.toArray();
 
-    if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase();
-        all = all.filter(c => c.title.toLowerCase().includes(query));
-    }
+  // Filter berdasarkan Search Query
+  if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      all = all.filter(c => c.title.toLowerCase().includes(query));
+  }
 
-    if (activeFolderId === null) return all;
-    else if (activeFolderId === UNCATEGORIZED_VIEW_ID) return all.filter(c => !c.folderId);
-    else return all.filter(c => c.folderId === activeFolderId);
-  }, [activeFolderId, searchQuery]);
+  // Filter berdasarkan Folder
+  let filtered = all;
+  if (activeFolderId === UNCATEGORIZED_VIEW_ID) {
+      filtered = all.filter(c => !c.folderId);
+  } else if (activeFolderId !== null) {
+      filtered = all.filter(c => c.folderId === activeFolderId);
+  }
+
+  // NATURAL SORT: Logika utama untuk mengurutkan Chapter 1, 2, 10
+  return filtered.sort((a, b) => 
+    a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
+  );
+}, [activeFolderId, searchQuery]);
 
   // --- LAZY COVER ---
   useEffect(() => {
