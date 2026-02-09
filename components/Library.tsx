@@ -16,6 +16,9 @@ const UNCATEGORIZED_VIEW_ID = -1;
 
 interface LibraryProps {
   onSelectBook: (book: ComicBook, currentList: ComicBook[]) => void;
+  // Tambahan props untuk persistensi navigasi
+  activeFolderId: number | null;
+  onNavigate: (id: number | null) => void;
 }
 
 // Helper untuk Cover
@@ -42,7 +45,7 @@ const CoverImage = ({ blob, title, small = false }: { blob?: Blob, title: string
   return <img src={url} alt={title} className="w-full h-full object-cover transition-opacity duration-300" />;
 };
 
-export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
+export const Library: React.FC<LibraryProps> = ({ onSelectBook, activeFolderId, onNavigate }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [isProcessing, setIsProcessing] = useState(false);
@@ -55,7 +58,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const [showListThumbnails, setShowListThumbnails] = useState(true);
   
   // --- FOLDER & SELECTION STATE ---
-  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
   const [showFolderInput, setShowFolderInput] = useState(false);
   
@@ -137,14 +139,14 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   // --- ACTIONS ---
 
   const navigateToFolder = (folderId: number | null) => {
-      setActiveFolderId(folderId);
+      onNavigate(folderId);
       setSelectedFolderIds([]); 
   };
 
   const navigateUp = async () => {
       if (!currentFolder) { navigateToFolder(null); return; }
       const parentId = currentFolder.parentId || null;
-      setActiveFolderId(parentId);
+      onNavigate(parentId);
   };
 
   const assignBooksToFolder = async (bookIds: number[], folderId: number | null) => {
@@ -188,7 +190,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const deleteFolder = async (folderId: number) => {
       if(confirm("Delete folder and ALL its contents?")) {
           await deleteFolderRecursive(folderId);
-          if(activeFolderId === folderId) setActiveFolderId(null);
+          if(activeFolderId === folderId) onNavigate(null);
       }
   };
 
@@ -227,7 +229,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       try {
           await db.comics.clear();
           await db.folders.clear();
-          setActiveFolderId(null);
+          onNavigate(null);
           alert("Library has been reset.");
       } catch (err) { console.error(err); alert("Reset failed."); }
       finally { setIsProcessing(false); }

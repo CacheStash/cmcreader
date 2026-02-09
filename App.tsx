@@ -5,7 +5,9 @@ import { ComicBook } from './types';
 
 function App() {
   const [activeBook, setActiveBook] = useState<ComicBook | null>(null);
-  const [readingQueue, setReadingQueue] = useState<ComicBook[]>([]); // Antrian untuk navigasi Next/Prev
+  const [readingQueue, setReadingQueue] = useState<ComicBook[]>([]);
+  // State navigasi folder dipindah ke sini agar tidak hilang saat Reader dibuka
+  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
 
   const handleOpenBook = (book: ComicBook, currentList: ComicBook[]) => {
     setActiveBook(book);
@@ -40,7 +42,11 @@ function App() {
           hasPrev={readingQueue.findIndex(b => b.id === activeBook.id) > 0}
         />
       ) : (
-        <Library onSelectBook={handleOpenBook} />
+        <Library 
+          onSelectBook={handleOpenBook} 
+          activeFolderId={activeFolderId} 
+          onNavigate={setActiveFolderId} 
+        />
       )}
     </div>
   );
