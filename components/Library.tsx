@@ -5,15 +5,12 @@ import { extractCover, getFileExtension } from '../services/fileUtils';
 import { ComicBook, Folder } from '../types';
 import { Button } from './Button';
 import { 
-  FiPlus, FiBookOpen, FiTrash2, FiUploadCloud, FiFileText, 
-  FiFolder, FiMenu, FiX, FiLogOut, FiUser, FiAlertCircle, 
-  FiRefreshCw, FiLock, FiGrid, FiList, FiMoreVertical, FiCheck,
-  FiLayers, FiCheckSquare, FiSquare, FiInbox, FiLogIn, FiSearch, FiCheckCircle,
-  FiEye, FiEyeOff, FiCornerUpLeft, FiChevronRight, FiFolderPlus, FiFolderMinus, FiDatabase
+  FiPlus, FiBookOpen, FiTrash2, FiFileText, 
+  FiFolder, FiMenu, FiX, FiAlertCircle, 
+  FiRefreshCw, FiGrid, FiList, FiMoreVertical, FiCheck,
+  FiLayers, FiCheckSquare, FiSquare, FiInbox, FiSearch, FiCheckCircle,
+  FiEye, FiCornerUpLeft, FiChevronRight, FiFolderPlus, FiFolderMinus, FiDatabase
 } from 'react-icons/fi';
-import { useAuth } from '../contexts/AuthContext';
-import { AuthModal } from './AuthModal';
-import { supabase } from '../services/supabaseClient';
 
 const UNCATEGORIZED_VIEW_ID = -1;
 
@@ -46,16 +43,12 @@ const CoverImage = ({ blob, title, small = false }: { blob?: Blob, title: string
 };
 
 export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
-  const { user, signOut } = useAuth();
-  const [showAuthModal, setShowAuthModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [isProcessing, setIsProcessing] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
 
   // --- UI STATE ---
-  const [isGuestMode, setIsGuestMode] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -63,7 +56,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   
   // --- FOLDER & SELECTION STATE ---
   const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
-  
   const [newFolderName, setNewFolderName] = useState("");
   const [showFolderInput, setShowFolderInput] = useState(false);
   
@@ -84,7 +76,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
 
   // --- QUERY DATA ---
   
-  // Fetch folder saat ini
   const currentFolder = useLiveQuery(async () => {
       if (activeFolderId && activeFolderId !== UNCATEGORIZED_VIEW_ID) {
           return db.folders.get(activeFolderId);
@@ -92,7 +83,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       return null;
   }, [activeFolderId]);
 
-  // Breadcrumbs (Computed automatically, no need for manual state)
   const breadcrumbs = useLiveQuery(async () => {
       if (!activeFolderId || activeFolderId === UNCATEGORIZED_VIEW_ID) return [];
       const trail: Folder[] = [];
@@ -105,7 +95,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       return trail;
   }, [activeFolderId]);
 
-  // Fetch Sub-folders
   const subFolders = useLiveQuery(async () => {
       const all = await db.folders.toArray();
       return all.filter(f => {
@@ -150,14 +139,12 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   const navigateToFolder = (folderId: number | null) => {
       setActiveFolderId(folderId);
       setSelectedFolderIds([]); 
-      // FIX 1: Removed setFolderPath (now using computed breadcrumbs)
   };
 
   const navigateUp = async () => {
       if (!currentFolder) { navigateToFolder(null); return; }
       const parentId = currentFolder.parentId || null;
       setActiveFolderId(parentId);
-      // FIX 1: Removed setFolderPath
   };
 
   const assignBooksToFolder = async (bookIds: number[], folderId: number | null) => {
@@ -166,20 +153,9 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         const updateData: any = folderId === null ? { folderId: undefined } : { folderId };
         await db.comics.update(id, updateData as any);
     }
-    if (user) {
-        const targetFolder = folderId ? await db.folders.get(folderId) : null;
-        const books = await db.comics.where('id').anyOf(bookIds).toArray();
-        const validBooks = books.filter(b => b.supabaseId);
-        for (const book of validBooks) {
-             await supabase.from('comics').update({ folder_id: targetFolder?.supabaseId || null }).match({ id: book.supabaseId });
-        }
-    }
     setSelectedBookIds([]);
   };
 
-  // --- REQ 1 & 3: BULK ACTIONS ---
-
-  // 1. Group Selected Folders
   const handleGroupSelectedFolders = async () => {
       if (selectedFolderIds.length < 1) return;
       const groupName = prompt("Enter name for the new Group / Parent Folder:");
@@ -192,46 +168,23 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           if (newParentId) {
               for (const folderId of selectedFolderIds) {
                   await db.folders.update(folderId, { parentId: newParentId });
-                  if(user) {
-                      const f = await db.folders.get(folderId);
-                      const parentF = await db.folders.get(newParentId);
-                      if(f?.supabaseId && parentF?.supabaseId) {
-                          supabase.from('folders').update({ parent_id: parentF.supabaseId }).match({ id: f.supabaseId });
-                      }
-                  }
               }
-              alert(`Moved ${selectedFolderIds.length} folders into "${groupName}"`);
               setSelectedFolderIds([]);
           }
       } catch (err) { console.error(err); alert("Failed to group folders."); }
   };
 
-  // FIX 2: Core Recursive Delete Function (Used by Single & Bulk)
   const deleteFolderRecursive = async (folderId: number) => {
-      // Delete books in this folder
       const books = await db.comics.where('folderId').equals(folderId).toArray();
       const bookIds = books.map(b => b.id!);
-      
-      // Delete Local Books
       if(bookIds.length > 0) await db.comics.bulkDelete(bookIds);
-      
-      // Delete Sync Books
-      if (user && books.length > 0) {
-          const supabaseIds = books.map(b => b.supabaseId).filter(id => id !== undefined);
-          if (supabaseIds.length > 0) await supabase.from('comics').delete().in('id', supabaseIds);
-      }
 
-      // Find Subfolders and Recursively Delete
       const sub = await db.folders.where('parentId').equals(folderId).toArray();
       for (const s of sub) await deleteFolderRecursive(s.id!);
 
-      // Delete the Folder itself
-      const folder = await db.folders.get(folderId);
       await db.folders.delete(folderId);
-      if (user && folder?.supabaseId) await supabase.from('folders').delete().match({ id: folder.supabaseId });
   };
 
-  // Wrapper for Single Delete (Context Menu / Sidebar X)
   const deleteFolder = async (folderId: number) => {
       if(confirm("Delete folder and ALL its contents?")) {
           await deleteFolderRecursive(folderId);
@@ -251,62 +204,41 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       finally { setIsProcessing(false); }
   };
 
-  // 3. Bulk Delete Files
   const handleBulkDeleteBooks = async () => {
       if (!confirm(`Delete ${selectedBookIds.length} selected files?`)) return;
       setIsProcessing(true);
       try {
-          const books = await db.comics.where('id').anyOf(selectedBookIds).toArray();
           await db.comics.bulkDelete(selectedBookIds);
-          if (user) {
-              const supabaseIds = books.map(b => b.supabaseId).filter(id => id !== undefined);
-              if (supabaseIds.length > 0) await supabase.from('comics').delete().in('id', supabaseIds);
-          }
           setSelectedBookIds([]);
       } catch (err) { console.error(err); }
       finally { setIsProcessing(false); }
   };
 
-  // 4. Bulk Eject Files (Remove from Folder)
   const handleBulkEjectFiles = async () => {
-      if (!confirm(`Remove ${selectedBookIds.length} files from their folders? (Files will move to Uncategorized)`)) return;
+      if (!confirm(`Remove ${selectedBookIds.length} files from their folders?`)) return;
       await assignBooksToFolder(selectedBookIds, null);
   };
 
-  // 5. Factory Reset
   const handleFactoryReset = async () => {
-      const confirmation = prompt("DANGER: Type 'DELETE' to wipe your ENTIRE library (Folders & Files). This cannot be undone.");
+      const confirmation = prompt("DANGER: Type 'DELETE' to wipe your entire library. This cannot be undone.");
       if (confirmation !== 'DELETE') return;
       
       setIsProcessing(true);
       try {
           await db.comics.clear();
           await db.folders.clear();
-          
-          if (user) {
-              // Wipe Cloud Data (If user wants full reset)
-              await supabase.from('comics').delete().neq('id', 0); // Delete all
-              await supabase.from('folders').delete().neq('id', 0); // Delete all
-          }
-          
           setActiveFolderId(null);
-          // Removed setFolderPath
           alert("Library has been reset.");
       } catch (err) { console.error(err); alert("Reset failed."); }
       finally { setIsProcessing(false); }
   };
 
-  // --- HELPERS ---
   const addFolder = async (customName?: string, parentIdOverride?: number) => {
     const name = customName || newFolderName;
     if(!name.trim()) return { id: undefined };
     let parentToUse = (activeFolderId && activeFolderId !== UNCATEGORIZED_VIEW_ID) ? activeFolderId : undefined;
     if (parentIdOverride !== undefined) parentToUse = parentIdOverride;
     const id = await db.folders.add({ name, parentId: parentToUse });
-    if(user) {
-        const {data} = await supabase.from('folders').insert({user_id:user.id, name}).select().single();
-        if(data) { await db.folders.update(id, {supabaseId: data.id}); }
-    }
     setNewFolderName(""); setShowFolderInput(false); setContextMenu(null);
     return { id };
   };
@@ -345,7 +277,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                 movedCount += ids.length;
             }
         }
-        alert(`Organized ${movedCount} comics into ${createdFolders} new folders.`);
+        alert(`Organized ${movedCount} comics into ${createdFolders} folders.`);
     } catch (err) { console.error(err); } finally { setIsProcessing(false); }
   };
 
@@ -353,7 +285,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       e.stopPropagation();
       if(confirm("Delete comic?")) {
           if(book.id) await db.comics.delete(book.id);
-          if(user && book.supabaseId) await supabase.from('comics').delete().match({id: book.supabaseId});
       }
   };
 
@@ -372,15 +303,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                       totalPages: 0, lastReadPage: 0, dateAdded: Date.now(), folderId: targetFolder
                   });
                   newBookIds.push(newId);
-                  if(user) {
-                      let cfId = null; 
-                      if(targetFolder) { const f = await db.folders.get(targetFolder); cfId = f?.supabaseId; }
-                      supabase.from('comics').insert({
-                          user_id: user.id, title, original_filename: file.name, format: ext, folder_id: cfId
-                      }).select().single().then(({data}) => {
-                          if(data) db.comics.update(newId, {supabaseId: data.id});
-                      });
-                  }
               }
           }
           setProcessingQueue(prev => [...prev, ...newBookIds]);
@@ -402,6 +324,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
   // --- SELECTION Logic ---
   const toggleSelection = (id: number) => { setSelectedBookIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]); setLastSelectedId(id); };
   const toggleFolderSelection = (e: React.MouseEvent, id: number) => { e.preventDefault(); e.stopPropagation(); setSelectedFolderIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]); };
+  
   const handleSelectAll = () => {
       if (!comics || comics.length === 0) return;
       const allIds = comics.map(c => c.id!);
@@ -409,6 +332,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       if (isAllSelected) { setSelectedBookIds([]); setSelectedFolderIds([]); setSelectionMode(false); setLastSelectedId(null); } 
       else { setSelectedBookIds(allIds); setSelectionMode(true); }
   };
+
   const handleCardClick = (e: React.MouseEvent, book: ComicBook) => {
     if (e.shiftKey && lastSelectedId !== null && comics) {
         e.preventDefault(); e.stopPropagation();
@@ -430,20 +354,19 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         onSelectBook(book, comics || []);
     }
   };
+
   const handleDragStart = (e: React.DragEvent, bookId: number) => {
     let idsToDrag = [bookId]; if (selectedBookIds.includes(bookId)) { idsToDrag = selectedBookIds; }
     e.dataTransfer.setData("bookIds", JSON.stringify(idsToDrag));
     e.dataTransfer.effectAllowed = "move";
   };
+
   const handleDropToFolder = (e: React.DragEvent, targetFolderId: number | null) => {
     e.preventDefault(); e.stopPropagation();
     const data = e.dataTransfer.getData("bookIds");
     if (!data) return;
     try { const ids = JSON.parse(data) as number[]; assignBooksToFolder(ids, targetFolderId === UNCATEGORIZED_VIEW_ID ? null : targetFolderId); } catch (err) { console.error(err); }
   };
-
-  // --- RENDER ---
-  if (!user && !isGuestMode) return <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white"><div className="text-center"><h1 className="text-3xl font-bold mb-4 text-blue-500">ZenReader</h1><div className="flex gap-4"><Button onClick={() => setShowAuthModal(true)}>Login</Button><Button onClick={() => setIsGuestMode(true)} className="bg-gray-800">Guest Mode</Button></div></div>{showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}</div>;
 
   return (
     <div 
@@ -486,7 +409,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                             {isFolderSelected ? <FiCheckSquare className="text-blue-500" /> : <FiSquare />}
                         </div>
                     ) : (
-                        <FiFolder className={folder.supabaseId ? "text-blue-400" : "text-gray-500"} />
+                        <FiFolder className="text-gray-500" />
                     )}
                     {folder.name}
                 </div>
@@ -505,7 +428,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         </div>
 
         {selectionMode && selectedFolderIds.length > 0 && (
-            <div className="px-3 pb-2 flex flex-col gap-1 animate-in slide-in-from-bottom-2">
+            <div className="px-3 pb-2 flex flex-col gap-1">
                 <Button onClick={handleGroupSelectedFolders} className="w-full justify-center !bg-green-600 hover:!bg-green-500 text-white text-xs py-2">
                     <span className="flex items-center gap-2"><FiFolderPlus /> Group Folders</span>
                 </Button>
@@ -517,11 +440,13 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
 
         <div className="p-4 border-t border-gray-800 bg-gray-900/50 mt-auto flex justify-between items-center">
            <div className="flex-1">
-               {user ? (
-                   <><div className="flex items-center gap-3 mb-3 px-1"><div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-xs font-bold">{user.email?.charAt(0).toUpperCase()}</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-white truncate">{user.email}</p></div></div><Button onClick={() => signOut()} className="w-full justify-center !bg-red-500/10 !text-red-400 hover:!bg-red-500/20 border border-red-500/20 text-sm py-1.5"><span className="flex items-center gap-2"><FiLogOut /> Logout</span></Button></>
-               ) : (
-                   <><div className="flex items-center gap-3 mb-3 px-1"><div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400">G</div><div className="flex-1 min-w-0"><p className="text-sm font-medium text-gray-300">Guest Mode</p><p className="text-xs text-gray-600">Local Storage Only</p></div></div><Button onClick={() => setShowAuthModal(true)} className="w-full justify-center !bg-blue-600/10 !text-blue-400 hover:!bg-blue-600/20 border border-blue-500/20 text-sm py-1.5"><span className="flex items-center gap-2"><FiLogIn /> Login to Sync</span></Button></>
-               )}
+                <div className="flex items-center gap-3 px-1">
+                    <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-400">L</div>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-300">Local Mode</p>
+                        <p className="text-[10px] text-gray-600 uppercase tracking-tighter">Offline Database</p>
+                    </div>
+                </div>
            </div>
            
            <button onClick={handleFactoryReset} className="ml-2 p-2 text-gray-600 hover:text-red-500 transition-colors" title="Factory Reset (Wipe All Data)">
@@ -542,21 +467,11 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
           <div className="flex items-center gap-4 w-full md:w-auto overflow-hidden">
             <button onClick={() => setSidebarOpen(true)} className="md:hidden text-2xl text-white"><FiMenu /></button>
             <div className="flex items-center gap-1 text-xl md:text-3xl font-bold truncate overflow-x-auto no-scrollbar whitespace-nowrap">
-               <span 
-                 onClick={() => navigateToFolder(null)} 
-                 className={`cursor-pointer hover:text-blue-400 flex-shrink-0 ${activeFolderId === null ? 'text-blue-500' : 'text-gray-500'}`}
-               >
-                 Library
-               </span>
+               <span onClick={() => navigateToFolder(null)} className={`cursor-pointer hover:text-blue-400 flex-shrink-0 ${activeFolderId === null ? 'text-blue-500' : 'text-gray-500'}`}>Library</span>
                {breadcrumbs?.map((folder, index) => (
                    <React.Fragment key={folder.id}>
                        <FiChevronRight className="text-gray-600 text-lg flex-shrink-0" />
-                       <span 
-                           onClick={() => navigateToFolder(folder.id!)}
-                           className={`cursor-pointer hover:text-blue-400 flex-shrink-0 ${index === breadcrumbs.length - 1 ? 'text-blue-500' : 'text-gray-500'}`}
-                       >
-                           {folder.name}
-                       </span>
+                       <span onClick={() => navigateToFolder(folder.id!)} className={`cursor-pointer hover:text-blue-400 flex-shrink-0 ${index === breadcrumbs.length - 1 ? 'text-blue-500' : 'text-gray-500'}`}>{folder.name}</span>
                    </React.Fragment>
                ))}
                {activeFolderId === UNCATEGORIZED_VIEW_ID && (<><FiChevronRight className="text-gray-600 text-lg flex-shrink-0" /><span className="text-blue-500 flex-shrink-0">Uncategorized</span></>)}
@@ -567,7 +482,6 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
              <div className="relative w-full md:w-64"><FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" /><input className="w-full bg-gray-800 border border-gray-700 rounded-full py-1.5 pl-9 pr-4 text-sm text-white focus:border-blue-500 outline-none transition-all focus:bg-gray-800/80" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} /></div>
 
              <div className="flex w-full md:w-auto gap-3 justify-end">
-                {isSyncing && <FiRefreshCw className="animate-spin text-blue-400" />}
                 <div className="flex bg-gray-800 rounded-lg p-1">
                     <button onClick={handleSelectAll} className={`p-2 rounded flex items-center gap-1 border-r border-gray-700 mr-1 pr-3 ${selectedBookIds.length > 0 && selectedBookIds.length === comics?.length ? 'text-blue-400' : 'text-gray-400 hover:text-white'}`}><FiCheckCircle /></button>
                     <button onClick={() => { setSelectionMode(!selectionMode); setSelectedBookIds([]); setSelectedFolderIds([]); setLastSelectedId(null); }} className={`p-2 rounded flex items-center gap-1 border-r border-gray-700 mr-1 pr-3 ${selectionMode ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}><FiCheckSquare /></button>
@@ -576,7 +490,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                     <button onClick={() => setViewMode('list')} className={`p-2 rounded ${viewMode === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}><FiList /></button>
                 </div>
              </div>
-             <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && processFiles(e.target.files)} className="hidden" accept=".cbz,.pdf,application/pdf,application/vnd.comicbook+zip,application/x-cbz,application/zip,application/x-zip-compressed,multipart/x-zip" multiple />
+             <input type="file" ref={fileInputRef} onChange={(e) => e.target.files && processFiles(e.target.files)} className="hidden" accept=".cbz,.pdf" multiple />
           </div>
         </header>
 
@@ -593,7 +507,7 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                   {isMissingFile && <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 p-2 text-center"><FiAlertCircle className="text-3xl text-red-400 mb-2" /><span className="text-xs text-red-200 font-bold">Missing</span></div>}
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/90 to-transparent p-4 pt-10">
                     <h3 className="font-semibold text-white truncate text-sm mb-1">{book.title}</h3>
-                    <div className="flex justify-between items-center text-xs text-gray-400"><span className="uppercase bg-gray-700 px-1.5 py-0.5 rounded text-[10px]">{book.format}</span>{book.supabaseId && <span className="text-blue-400 font-bold text-[10px]">SYNCED</span>}</div>
+                    <div className="flex justify-between items-center text-xs text-gray-400"><span className="uppercase bg-gray-700 px-1.5 py-0.5 rounded text-[10px]">{book.format}</span></div>
                   </div>
                   {isSelected && <div className="absolute inset-0 border-4 border-blue-500 rounded-xl z-20 pointer-events-none bg-blue-500/20 flex items-center justify-center"><FiCheck className="text-6xl text-white drop-shadow-lg" /></div>}
                 </>
@@ -619,18 +533,17 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
                   onClick={(e) => !isMissingFile && handleCardClick(e, book)}
                   className={`
                     ${viewMode === 'grid' 
-                        ? `group relative aspect-[2/3] bg-gray-800 rounded-xl overflow-hidden shadow-2xl transition-all border border-gray-800 ${isSelected ? 'ring-2 ring-blue-500 transform scale-95' : 'hover:scale-[1.02]'}`
+                        ? `group relative aspect-[2/3] bg-gray-800 rounded-xl overflow-hidden transition-all border border-gray-800 ${isSelected ? 'ring-2 ring-blue-500 transform scale-95' : 'hover:scale-[1.02]'}`
                         : `group flex items-center justify-between p-4 bg-gray-800 rounded-lg border border-gray-800 transition-all ${isSelected ? 'bg-blue-900/20 border-blue-500/50' : 'hover:bg-gray-800/80'}`
                     }
                     ${isMissingFile ? 'opacity-60 cursor-not-allowed grayscale' : 'cursor-pointer'}
                   `}
                 >
                   {viewMode === 'grid' ? <GridContent /> : <ListContent />}
-                  {/* REQ 3: BULK FILES ACTIONS (Delete & Eject) */}
                   {!selectionMode ? (
                       <div className={viewMode === 'grid' ? "absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-all z-30" : "flex items-center gap-2"}>
-                         <button onClick={(e) => { e.stopPropagation(); setBookToMove(book); setShowMoveModal(true); }} className="p-2 text-white bg-gray-900/80 hover:bg-blue-600 rounded-full shadow-lg"><FiMoreVertical size={16} /></button>
-                         <button onClick={(e) => deleteBook(e, book)} className="p-2 text-white bg-gray-900/80 hover:bg-red-600 rounded-full shadow-lg"><FiTrash2 size={16} /></button>
+                         <button onClick={(e) => { e.stopPropagation(); setBookToMove(book); setShowMoveModal(true); }} className="p-2 text-white bg-gray-900/80 hover:bg-blue-600 rounded-full"><FiMoreVertical size={16} /></button>
+                         <button onClick={(e) => deleteBook(e, book)} className="p-2 text-white bg-gray-900/80 hover:bg-red-600 rounded-full"><FiTrash2 size={16} /></button>
                       </div>
                   ) : null}
                 </div>
@@ -639,13 +552,12 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
         </div>
       </div>
       
-      {/* GLOBAL ACTIONS WHEN FILES SELECTED */}
       {selectionMode && selectedBookIds.length > 0 && (
-          <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 flex gap-4 bg-gray-900/90 backdrop-blur-md p-2 rounded-full border border-gray-700 shadow-2xl animate-in slide-in-from-bottom-4">
-              <button onClick={handleBulkDeleteBooks} className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-full font-bold shadow-lg transition-transform hover:scale-105">
+          <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 flex gap-4 bg-gray-900/90 backdrop-blur-md p-2 rounded-full border border-gray-700 shadow-2xl">
+              <button onClick={handleBulkDeleteBooks} className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-full font-bold transition-transform hover:scale-105">
                   <FiTrash2 /> Delete ({selectedBookIds.length})
               </button>
-              <button onClick={handleBulkEjectFiles} className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-full font-bold shadow-lg transition-transform hover:scale-105">
+              <button onClick={handleBulkEjectFiles} className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-full font-bold transition-transform hover:scale-105">
                   <FiFolderMinus /> Eject
               </button>
           </div>
@@ -654,15 +566,17 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook }) => {
       {showMoveModal && bookToMove && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setShowMoveModal(false)}>
            <div className="bg-gray-900 border border-gray-700 p-6 rounded-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
-              <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-white">Move "{bookToMove.title}" to...</h3><button onClick={() => setShowMoveModal(false)}><FiX className="text-gray-400" /></button></div>
+              <div className="flex justify-between items-center mb-4"><h3 className="font-bold text-white">Move to...</h3><button onClick={() => setShowMoveModal(false)}><FiX className="text-gray-400" /></button></div>
               <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
                  <button onClick={() => { assignBooksToFolder([bookToMove.id!], null); setShowMoveModal(false); }} className="w-full text-left px-3 py-2 rounded hover:bg-gray-800 text-gray-300 flex items-center gap-2"><FiInbox className="text-gray-500" /> Uncategorized</button>
                  {subFolders?.map(f => (<button key={f.id} onClick={() => { assignBooksToFolder([bookToMove.id!], f.id!); setShowMoveModal(false); }} className="w-full text-left px-3 py-2 rounded hover:bg-gray-800 text-gray-300 flex items-center gap-2"><FiFolder className="text-blue-500" /> {f.name} {bookToMove.folderId === f.id && <FiCheck className="ml-auto text-green-500" />}</button>))}
               </div>
+              <div className="pt-4 border-t border-gray-800">
+                <input className="w-full bg-gray-800 rounded px-3 py-2 text-sm text-white border border-gray-700 outline-none focus:border-blue-500" placeholder="Create new folder & move..." value={quickNewFolderName} onChange={(e) => setQuickNewFolderName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleQuickCreateAndMove()} />
+              </div>
            </div>
         </div>
       )}
-      {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
     </div>
   );
 };

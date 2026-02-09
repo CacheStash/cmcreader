@@ -8,16 +8,15 @@ export class ZenReaderDatabase extends Dexie {
   constructor() {
     super('ZenReaderDB');
     
-    // Versi lama (biarkan untuk history migrasi jika perlu, atau timpa jika development)
-    this.version(3).stores({
-      comics: '++id, title, dateAdded, lastReadPage, folderId, supabaseId',
-      folders: '++id, name, supabaseId'
-    });
-
-    // NEW: Version 4 adding parentId
-    this.version(4).stores({
-      comics: '++id, title, dateAdded, lastReadPage, folderId, supabaseId',
-      folders: '++id, name, parentId, supabaseId' // Added parentId
+    /**
+     * Versi 5: Clean Local-First Schema
+     * Menghapus semua dependensi ke Supabase.
+     * '++id' adalah Primary Key auto-increment.
+     * Field lainnya adalah properti yang di-indeks untuk pencarian cepat.
+     */
+    this.version(5).stores({
+      comics: '++id, title, dateAdded, lastReadPage, folderId',
+      folders: '++id, name, parentId'
     });
   }
 }
