@@ -3,7 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ComicBook, ReaderMode } from '../types';
 import { parseCBZ, parsePDF } from '../services/fileUtils';
 import { db } from '../db';
-import { FiArrowLeft, FiColumns, FiMaximize, FiArrowDown, FiZoomIn, FiZoomOut, FiX, FiChevronRight, FiChevronLeft } from 'react-icons/fi';
+import { 
+  FiArrowLeft, FiColumns, FiMaximize, FiArrowDown, 
+  FiZoomIn, FiZoomOut, FiX, FiChevronRight, 
+  FiChevronLeft, FiChevronDown 
+} from 'react-icons/fi';
 
 interface ReaderProps {
   book: ComicBook;
@@ -12,9 +16,15 @@ interface ReaderProps {
   onPrevChapter?: () => void;
   hasNext?: boolean;
   hasPrev?: boolean;
+  // Tambahan Props dari App.tsx
+  queue: ComicBook[];
+  onJumpToBook: (book: ComicBook) => void;
 }
 
-export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, onPrevChapter, hasNext, hasPrev }) => {
+export const Reader: React.FC<ReaderProps> = ({ 
+  book, onClose, onNextChapter, onPrevChapter, 
+  hasNext, hasPrev, queue, onJumpToBook 
+}) => {
   const [pages, setPages] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(book.lastReadPage || 0);
   const [loading, setLoading] = useState(true);
@@ -158,18 +168,47 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
 
       <motion.div 
         animate={{ y: controlsVisible ? 0 : -100 }}
-        className="absolute top-0 w-full h-16 bg-black/90 flex items-center justify-between px-4 z-30"
+        className="absolute top-0 w-full h-16 bg-black/90 flex items-center justify-between px-4 z-30 border-b border-white/5"
       >
-        <button onClick={onClose} className="p-2 text-white hover:bg-gray-800 rounded-full"><FiArrowLeft /></button>
-        <div className="flex gap-4 items-center mr-12">
-            <div className="flex items-center gap-2 bg-gray-800 rounded px-2 py-1">
-                <button onClick={() => adjustZoom(-10)} className="text-white"><FiZoomOut /></button>
-                <span className="text-xs text-white w-8 text-center">{zoom}%</span>
-                <button onClick={() => adjustZoom(10)} className="text-white"><FiZoomIn /></button>
+        <div className="flex items-center gap-2">
+            <button onClick={onClose} className="p-2 text-white hover:bg-gray-800 rounded-full transition-colors" title="Back to Library">
+                <FiArrowLeft size={20} />
+            </button>
+
+            {/* Dropdown Chapter List */}
+            <div className="relative group flex items-center bg-gray-800/40 border border-white/10 rounded-lg hover:border-blue-500/50 transition-all ml-1">
+                <select 
+                    value={book.id}
+                    onChange={(e) => {
+                        const targetId = Number(e.target.value);
+                        const selected = queue.find(b => b.id === targetId);
+                        if (selected) onJumpToBook(selected);
+                    }}
+                    className="appearance-none bg-transparent text-xs md:text-sm font-medium text-blue-400 pl-3 pr-9 py-1.5 cursor-pointer outline-none max-w-[150px] md:max-w-[300px] truncate"
+                >
+                    {queue.map((item, index) => (
+                        <option key={item.id} value={item.id} className="bg-gray-900 text-white">
+                            {index + 1}. {item.title}
+                        </option>
+                    ))}
+                </select>
+                <div className="absolute right-2.5 pointer-events-none text-gray-500 group-hover:text-blue-400 transition-colors">
+                    <FiChevronDown size={14} />
+                </div>
             </div>
-            <button onClick={() => setReaderMode(ReaderMode.SINGLE)} className={`p-2 rounded ${readerMode === ReaderMode.SINGLE ? 'text-blue-400' : 'text-white'}`}><FiMaximize /></button>
-            <button onClick={() => setReaderMode(ReaderMode.DOUBLE)} className={`p-2 rounded ${readerMode === ReaderMode.DOUBLE ? 'text-blue-400' : 'text-white'}`}><FiColumns /></button>
-            <button onClick={() => setReaderMode(ReaderMode.VERTICAL)} className={`p-2 rounded ${readerMode === ReaderMode.VERTICAL ? 'text-blue-400' : 'text-white'}`}><FiArrowDown /></button>
+        </div>
+
+        <div className="flex gap-2 md:gap-4 items-center mr-12">
+            <div className="flex items-center gap-2 bg-gray-800 rounded px-2 py-1 border border-white/5">
+                <button onClick={() => adjustZoom(-10)} className="text-white hover:text-blue-400 transition-colors"><FiZoomOut /></button>
+                <span className="text-[10px] md:text-xs text-white w-8 text-center font-mono">{zoom}%</span>
+                <button onClick={() => adjustZoom(10)} className="text-white hover:text-blue-400 transition-colors"><FiZoomIn /></button>
+            </div>
+            <div className="flex items-center bg-gray-800 rounded p-1 border border-white/5">
+                <button onClick={() => setReaderMode(ReaderMode.SINGLE)} className={`p-1.5 rounded ${readerMode === ReaderMode.SINGLE ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`} title="Single Page"><FiMaximize size={18} /></button>
+                <button onClick={() => setReaderMode(ReaderMode.DOUBLE)} className={`p-1.5 rounded ${readerMode === ReaderMode.DOUBLE ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`} title="Double Page"><FiColumns size={18} /></button>
+                <button onClick={() => setReaderMode(ReaderMode.VERTICAL)} className={`p-1.5 rounded ${readerMode === ReaderMode.VERTICAL ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`} title="Vertical Scroll"><FiArrowDown size={18} /></button>
+            </div>
         </div>
       </motion.div>
 
@@ -187,7 +226,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
             {pages.map((src, idx) => (
               <img 
                 key={idx} 
-                // FIX: Use curly braces to avoid returning the element
                 ref={el => { pageRefs.current[idx] = el; }} 
                 data-index={idx}
                 src={src} 
@@ -202,7 +240,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
           <AnimatePresence mode="wait">
             <motion.div key={currentPage} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center justify-center gap-1 w-full h-full p-2">
               {getVisiblePages().map(idx => (
-                <img key={idx} src={pages[idx]} className="max-h-full max-w-full object-contain shadow-2xl" style={{ transform: `scale(${zoom / 100})` }} alt="Page" />
+                <img key={idx} src={pages[idx]} className="max-h-full max-w-full object-contain shadow-2xl transition-transform duration-200" style={{ transform: `scale(${zoom / 100})` }} alt="Page" />
               ))}
             </motion.div>
           </AnimatePresence>
@@ -213,7 +251,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
          {hasPrev && (
              <button 
                 onClick={(e) => { e.stopPropagation(); onPrevChapter?.(); }} 
-                className="pointer-events-auto flex items-center gap-2 px-4 py-3 bg-black/40 hover:bg-black/80 backdrop-blur-md text-white rounded-full border border-white/10 transition-all group"
+                className="pointer-events-auto flex items-center gap-2 px-4 py-3 bg-black/40 hover:bg-blue-600 backdrop-blur-md text-white rounded-full border border-white/10 transition-all group shadow-2xl"
              >
                 <FiChevronLeft className="group-hover:-translate-x-1 transition-transform" /> Prev Chapter
              </button>
@@ -222,7 +260,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
          {hasNext && (
              <button 
                 onClick={(e) => { e.stopPropagation(); onNextChapter?.(); }} 
-                className="pointer-events-auto flex items-center gap-2 px-4 py-3 bg-black/40 hover:bg-black/80 backdrop-blur-md text-white rounded-full border border-white/10 transition-all group"
+                className="pointer-events-auto flex items-center gap-2 px-4 py-3 bg-black/40 hover:bg-blue-600 backdrop-blur-md text-white rounded-full border border-white/10 transition-all group shadow-2xl"
              >
                 Next Chapter <FiChevronRight className="group-hover:translate-x-1 transition-transform" />
              </button>
@@ -231,11 +269,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, onClose, onNextChapter, on
 
       <motion.div 
         animate={{ y: controlsVisible ? 0 : 100 }}
-        className="absolute bottom-0 w-full h-16 bg-black/90 flex items-center justify-center px-6 z-30 gap-4"
+        className="absolute bottom-0 w-full h-16 bg-black/90 flex items-center justify-center px-6 z-30 gap-4 border-t border-white/5"
       >
         <form onSubmit={handlePageJump} className="flex items-center gap-2">
-          <input type="number" className="w-12 bg-gray-800 text-white text-center rounded" value={tempPageInput || currentPage + 1} onChange={(e) => setTempPageInput(e.target.value)} onFocus={() => setTempPageInput("")} />
-          <span className="text-gray-400 text-sm">/ {pages.length}</span>
+          <input type="number" className="w-12 bg-gray-800 text-white text-center rounded border border-white/10 focus:border-blue-500 outline-none text-sm py-1" value={tempPageInput || currentPage + 1} onChange={(e) => setTempPageInput(e.target.value)} onFocus={() => setTempPageInput("")} />
+          <span className="text-gray-400 text-sm font-mono">/ {pages.length}</span>
         </form>
         {readerMode !== ReaderMode.VERTICAL && (
             <input type="range" min={0} max={pages.length - 1} value={currentPage} onChange={(e) => setCurrentPage(parseInt(e.target.value))} className="w-64 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />

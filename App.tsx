@@ -40,6 +40,8 @@ function App() {
           onPrevChapter={handlePrevChapter}
           hasNext={readingQueue.findIndex(b => b.id === activeBook.id) < readingQueue.length - 1}
           hasPrev={readingQueue.findIndex(b => b.id === activeBook.id) > 0}
+          queue={readingQueue}
+          onJumpToBook={(book) => setActiveBook(book)}
         />
       ) : (
         <Library 
@@ -50,6 +52,6 @@ function App() {
       )}
     </div>
   );
-}
+} // <--- Pastikan kurung kurawal penutup ini ada
 
 export default App;
