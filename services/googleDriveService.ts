@@ -3,7 +3,7 @@
 // Ganti dengan kredensial dari Google Cloud Console
 export const GOOGLE_CLIENT_ID = "839557944575-brvkdibadkvj29sc2q8idchmj2dgl6hm.apps.googleusercontent.com";
 export const GOOGLE_API_KEY = "AIzaSyDUGihYhofVIshsoOS-NRyv-yHhcuc2o6A";
-export const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+export const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
 declare const google: any;
 declare const gapi: any;
@@ -50,13 +50,13 @@ export function openDrivePicker(
       // Mendukung CBZ (zip format), PDF, dan octet-stream
       view.setMimeTypes("application/zip,application/x-zip-compressed,application/octet-stream,application/pdf");
 
-      const docsView = new google.picker.DocsView()
+     const docsView = new google.picker.DocsView(google.picker.ViewId.DOCS)
         .setIncludeFolders(true)
         .setSelectFolderEnabled(false);
 
       const picker = new google.picker.PickerBuilder()
         .addView(docsView)
-        .setAppId(GOOGLE_CLIENT_ID.split('-')[0])
+        .addView(new google.picker.DocsUploadView()) // Opsional: tab upload jika dibutuhkan
         .setOAuthToken(currentAccessToken)
         .setDeveloperKey(GOOGLE_API_KEY)
         .setCallback((data: any) => {
