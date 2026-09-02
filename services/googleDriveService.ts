@@ -56,6 +56,7 @@ export function openDrivePicker(
 
       const picker = new google.picker.PickerBuilder()
         .addView(docsView)
+        .setAppId(GOOGLE_CLIENT_ID.split('-')[0])
         .setOAuthToken(currentAccessToken)
         .setDeveloperKey(GOOGLE_API_KEY)
         .setCallback((data: any) => {
@@ -65,12 +66,15 @@ export function openDrivePicker(
               id: doc.id,
               name: doc.name,
             });
+          } else if (data.action === google.picker.Action.CANCEL) {
+            // Pengguna menutup picker tanpa memilih file
           }
         })
         .build();
 
       picker.setVisible(true);
     } catch (err) {
+      console.error("Internal Picker Error:", err);
       if (onError) onError(err);
     }
   };
@@ -78,6 +82,7 @@ export function openDrivePicker(
   // Minta token baru atau gunakan token yang sudah ada
   tokenClient.callback = (response: any) => {
     if (response.error) {
+      console.error("Token Client Error:", response);
       if (onError) onError(response);
       return;
     }
