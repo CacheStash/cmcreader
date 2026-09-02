@@ -9,8 +9,10 @@ import {
   FiFolder, FiMenu, FiX, FiAlertCircle, 
   FiRefreshCw, FiGrid, FiList, FiMoreVertical, FiCheck,
   FiLayers, FiCheckSquare, FiSquare, FiInbox, FiSearch, FiCheckCircle,
-  FiEye, FiCornerUpLeft, FiChevronRight, FiFolderPlus, FiFolderMinus, FiDatabase
+  FiEye, FiCornerUpLeft, FiChevronRight, FiFolderPlus, FiFolderMinus, FiDatabase,
+  FiCloud
 } from 'react-icons/fi';
+import { initGoogleDrive, openDrivePicker, downloadDriveComicAsFile } from '../services/googleDriveService';
 
 const UNCATEGORIZED_VIEW_ID = -1;
 
@@ -51,6 +53,37 @@ export const Library: React.FC<LibraryProps> = ({ onSelectBook, activeFolderId, 
   const [isProcessing, setIsProcessing] = useState(false);
   const [dragActive, setDragActive] = useState(false);
 
+  const [driveLoadingText, setDriveLoadingText] = useState<string | null>(null);
+
+  // Inisialisasi Google API Client saat komponen dimuat
+  useEffect(() => {
+    initGoogleDrive();
+  }, []);
+
+  const handleOpenGoogleDrive = () => {
+    openDrivePicker(
+      async (fileInfo) => {
+        try {
+          setIsProcessing(true);
+          setDriveLoadingText(`Downloading "${fileInfo.name}" from Google Drive...`);
+          
+          const downloadedFile = await downloadDriveComicAsFile(fileInfo.id, fileInfo.name);
+          await processFiles([downloadedFile]);
+        } catch (err: any) {
+          console.error("Google Drive Error:", err);
+          alert(err?.message || "Failed to download comic from Google Drive.");
+        } finally {
+          setIsProcessing(false);
+          setDriveLoadingText(null);
+        }
+      },
+      (err) => {
+        console.error("Google Picker Error:", err);
+        alert("Failed to connect to Google Drive. Check configuration and origin URL.");
+      }
+    );
+  };
+  
   // --- UI STATE ---
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
@@ -398,6 +431,17 @@ const comics = useLiveQuery(async () => {
       <aside className={`fixed md:sticky top-0 h-screen w-64 bg-black/90 border-r border-gray-800 z-40 transform transition-transform duration-300 flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
         <div className="p-4 border-b border-gray-800 flex items-center justify-between"><h2 className="font-bold text-gray-400 uppercase text-xs tracking-wider">Library</h2><button onClick={() => setSidebarOpen(false)} className="md:hidden text-gray-400"><FiX /></button></div>
         <div className="p-3 pb-0"><Button onClick={() => fileInputRef.current?.click()} disabled={isProcessing} className="w-full justify-center !bg-blue-600 hover:!bg-blue-500 text-white"><span className="flex items-center gap-2"><FiPlus className="text-xl" /> Add Comic</span></Button></div>
+        <div className="p-3 pt-2 pb-0">
+          <Button 
+            onClick={handleOpenGoogleDrive} 
+            disabled={isProcessing} 
+            className="w-full justify-center !bg-emerald-600 hover:!bg-emerald-500 text-white"
+          >
+            <span className="flex items-center gap-2">
+              <FiCloud className="text-lg" /> Google Drive
+            </span>
+          </Button>
+        </div>
         
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           <button onClick={() => navigateToFolder(null)} onDragOver={(e) => e.preventDefault()} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${activeFolderId === null ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800'}`}><FiBookOpen /> All Comics</button>
