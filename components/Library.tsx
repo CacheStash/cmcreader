@@ -556,6 +556,10 @@ const comics = useLiveQuery(async () => {
 
         {isProcessing && <div className="mb-6 p-4 bg-blue-900/20 border border-blue-800 rounded-lg animate-pulse text-blue-200 flex items-center justify-center gap-3">Processing...</div>}
 
+        <FiRefreshCw className="animate-spin text-lg" />
+          <span>{driveLoadingText || "Processing..."}</span>
+        </div>}
+      
         <div className={viewMode === 'grid' ? "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6" : "flex flex-col gap-2"}>
             {comics?.map((book) => {
               const isMissingFile = !book.fileHandle;
