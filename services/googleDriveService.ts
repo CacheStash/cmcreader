@@ -50,8 +50,12 @@ export function openDrivePicker(
       // Mendukung CBZ (zip format), PDF, dan octet-stream
       view.setMimeTypes("application/zip,application/x-zip-compressed,application/octet-stream,application/pdf");
 
+      const docsView = new google.picker.DocsView()
+        .setIncludeFolders(true)
+        .setSelectFolderEnabled(false);
+
       const picker = new google.picker.PickerBuilder()
-        .addView(view)
+        .addView(docsView)
         .setOAuthToken(currentAccessToken)
         .setDeveloperKey(GOOGLE_API_KEY)
         .setCallback((data: any) => {
