@@ -46,17 +46,20 @@ export function openDrivePicker(
 
   const showPicker = () => {
     try {
-      const view = new google.picker.View(google.picker.ViewId.DOCS);
-      // Mendukung CBZ (zip format), PDF, dan octet-stream
-      view.setMimeTypes("application/zip,application/x-zip-compressed,application/octet-stream,application/pdf");
-
-     const docsView = new google.picker.DocsView(google.picker.ViewId.DOCS)
+     const allFilesView = new google.picker.DocsView()
         .setIncludeFolders(true)
         .setSelectFolderEnabled(false);
 
+      // View 2: Navigasi pohon folder bawaan Google Drive
+      const folderView = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+        .setSelectFolderEnabled(false)
+        .setMimeTypes("application/vnd.google-apps.folder");
+
       const picker = new google.picker.PickerBuilder()
-       .setAppId(GOOGLE_CLIENT_ID.split('-')[0])
-        .addView(docsView)
+        .setAppId(GOOGLE_CLIENT_ID.split('-')[0])
+        .addView(allFilesView)
+        .addView(folderView)
+        .enableFeature(google.picker.Feature.NAV_HIDDEN)
         .setOAuthToken(currentAccessToken)
         .setDeveloperKey(GOOGLE_API_KEY)
         .setCallback((data: any) => {
