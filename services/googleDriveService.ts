@@ -1,6 +1,5 @@
 // services/googleDriveService.ts
 
-// Ganti dengan kredensial dari Google Cloud Console
 export const GOOGLE_CLIENT_ID = "839557944575-brvkdibadkvj29sc2q8idchmj2dgl6hm.apps.googleusercontent.com";
 export const GOOGLE_API_KEY = "AIzaSyDUGihYhofVIshsoOS-NRyv-yHhcuc2o6A";
 export const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
@@ -20,7 +19,7 @@ export function initGoogleDrive(onInitialized?: () => void) {
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: GOOGLE_DRIVE_SCOPE,
-      callback: () => {}, // Callback default kosong, ditimpa secara dinamis saat request
+      callback: () => {},
     });
   }
 
@@ -46,16 +45,24 @@ export function openDrivePicker(
 
   const showPicker = () => {
     try {
-     // Gunakan View FOLDERS dengan navigasi penuh ke My Drive agar semua file biner (.cbz) terlihat
-      const driveView = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+      // 1. Tampilan My Drive (Menampilkan seluruh folder dan semua jenis file biner)
+      const myDriveView = new google.picker.DocsView()
         .setIncludeFolders(true)
         .setSelectFolderEnabled(false)
-        .setParent('root'); // Mulai dari My Drive utama
+        .setParent('root');
+
+      // 2. Tampilan Semua File (Universal Search untuk menemukan .cbz)
+      const allFilesView = new google.picker.DocsView()
+        .setIncludeFolders(true)
+        .setSelectFolderEnabled(false);
 
       const picker = new google.picker.PickerBuilder()
         .setAppId(GOOGLE_CLIENT_ID.split('-')[0])
-        .addView(driveView)
+        .setTitle("Pilih File Komik (.cbz, .zip, .pdf)")
+        .addView(myDriveView)
+        .addView(allFilesView)
         .enableFeature(google.picker.Feature.SUPPORT_DRIVES)
+        .enableFeature(google.picker.Feature.NAV_HIDDEN)
         .setOAuthToken(currentAccessToken)
         .setDeveloperKey(GOOGLE_API_KEY)
         .setCallback((data: any) => {
@@ -76,7 +83,6 @@ export function openDrivePicker(
     }
   };
 
-  // Minta token baru atau gunakan token yang sudah ada
   tokenClient.callback = (response: any) => {
     if (response.error) {
       console.error("Token Client Error:", response);
@@ -96,7 +102,6 @@ export function openDrivePicker(
 
 /**
  * Mengunduh file dari Google Drive menggunakan endpoint REST v3 alt=media
- * dan mengonversinya langsung menjadi instance `File`
  */
 export async function downloadDriveComicAsFile(fileId: string, fileName: string): Promise<File> {
   if (!currentAccessToken) {
