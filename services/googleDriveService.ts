@@ -46,20 +46,16 @@ export function openDrivePicker(
 
   const showPicker = () => {
     try {
-     const allFilesView = new google.picker.DocsView()
+     // Gunakan View FOLDERS dengan navigasi penuh ke My Drive agar semua file biner (.cbz) terlihat
+      const driveView = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
         .setIncludeFolders(true)
-        .setSelectFolderEnabled(false);
-
-      // View 2: Navigasi pohon folder bawaan Google Drive
-      const folderView = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
         .setSelectFolderEnabled(false)
-        .setMimeTypes("application/vnd.google-apps.folder");
+        .setParent('root'); // Mulai dari My Drive utama
 
       const picker = new google.picker.PickerBuilder()
         .setAppId(GOOGLE_CLIENT_ID.split('-')[0])
-        .addView(allFilesView)
-        .addView(folderView)
-        .enableFeature(google.picker.Feature.NAV_HIDDEN)
+        .addView(driveView)
+        .enableFeature(google.picker.Feature.SUPPORT_DRIVES)
         .setOAuthToken(currentAccessToken)
         .setDeveloperKey(GOOGLE_API_KEY)
         .setCallback((data: any) => {
