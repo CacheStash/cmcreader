@@ -1,15 +1,25 @@
 {
   "name": "zenreader",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "version": "1.0.0",
+  "main": "main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "dist": "npm run build && electron-builder"
+  },
+  "build": {
+    "appId": "com.zenreader.app",
+    "productName": "ZenReader",
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "build/icon.ico"
+    }
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.94.1",
     "dexie": "^4.3.0",
     "dexie-react-hooks": "^4.2.0",
     "framer-motion": "^12.31.0",
@@ -25,6 +35,8 @@
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
     "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^40.1.0",
+    "electron-builder": "^26.7.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

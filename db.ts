@@ -8,16 +8,21 @@ export class ZenReaderDatabase extends Dexie {
   constructor() {
     super('ZenReaderDB');
     
-    // Versi lama (biarkan untuk history migrasi jika perlu, atau timpa jika development)
+    // Version 3 & 4 (migration history)
     this.version(3).stores({
       comics: '++id, title, dateAdded, lastReadPage, folderId, supabaseId',
       folders: '++id, name, supabaseId'
     });
 
-    // NEW: Version 4 adding parentId
     this.version(4).stores({
       comics: '++id, title, dateAdded, lastReadPage, folderId, supabaseId',
-      folders: '++id, name, parentId, supabaseId' // Added parentId
+      folders: '++id, name, parentId, supabaseId'
+    });
+
+    // Version 5: Clean Local-First with filePath index
+    this.version(5).stores({
+      comics: '++id, title, filePath, dateAdded, lastReadPage, folderId',
+      folders: '++id, name, parentId'
     });
   }
 }
