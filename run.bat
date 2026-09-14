@@ -1,5 +1,5 @@
 @echo off
-title ZenReader - Comic Studio
+title ZenReader Desktop
 cd /d "%~dp0"
 
 echo ========================================
@@ -7,26 +7,29 @@ echo   ZenReader Desktop Comic Reader
 echo ========================================
 echo.
 
-if not exist node_modules (
-    echo [*] Memasang dependencies (pertama kali)...
+if not exist "node_modules" (
+    echo [*] Memasang dependencies...
     call npm install
-    if errorlevel 1 (
-        echo [ERROR] Gagal memasang dependencies.
-        pause
-        exit /b 1
-    )
+    if errorlevel 1 goto error
 )
 
-if not exist dist\index.html (
-    echo [*] Melakukan compile aplikasi (build)...
+if not exist "dist\index.html" (
+    echo [*] Melakukan build aplikasi...
     call npm run build
-    if errorlevel 1 (
-        echo [ERROR] Build gagal.
-        pause
-        exit /b 1
-    )
+    if errorlevel 1 goto error
 )
 
 echo [*] Membuka ZenReader Desktop...
-start "" npx electron .
-exit
+call npm start
+if errorlevel 1 goto error
+
+exit /b 0
+
+:error
+echo.
+echo ========================================
+echo [ERROR] Terjadi kesalahan saat menjalankan aplikasi.
+echo ========================================
+echo.
+pause
+exit /b 1
