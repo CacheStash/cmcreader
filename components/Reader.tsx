@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ComicBook, ReaderMode } from '../types';
-import { getPageList, loadSinglePage } from '../services/fileUtils';
+import { getPageList, loadSinglePage, getMatchingSeriesChapters } from '../services/fileUtils';
 import { db } from '../db';
 import { 
   FiArrowLeft, FiColumns, FiMaximize, FiArrowDown, 
@@ -125,6 +125,34 @@ export const Reader: React.FC<ReaderProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showChapterDropdown]);
+
+  // Filter chapters so only items belonging to the same series are shown
+  const seriesChapters = useMemo(() => {
+    return getMatchingSeriesChapters(book, chapterList);
+  }, [book, chapterList]);
+
+  const currentSeriesIndex = useMemo(() => {
+    return seriesChapters.findIndex(b => b.id === book.id);
+  }, [seriesChapters, book.id]);
+
+  const canGoPrev = currentSeriesIndex > 0;
+  const canGoNext = currentSeriesIndex >= 0 && currentSeriesIndex < seriesChapters.length - 1;
+
+  const handleGoPrev = useCallback(() => {
+    if (canGoPrev && onSelectChapter) {
+      onSelectChapter(seriesChapters[currentSeriesIndex - 1]);
+    } else if (onPrevChapter) {
+      onPrevChapter();
+    }
+  }, [canGoPrev, onSelectChapter, seriesChapters, currentSeriesIndex, onPrevChapter]);
+
+  const handleGoNext = useCallback(() => {
+    if (canGoNext && onSelectChapter) {
+      onSelectChapter(seriesChapters[currentSeriesIndex + 1]);
+    } else if (onNextChapter) {
+      onNextChapter();
+    }
+  }, [canGoNext, onSelectChapter, seriesChapters, currentSeriesIndex, onNextChapter]);
 
   // Drag Scrolling State
   const containerRef = useRef<HTMLDivElement>(null);
@@ -347,11 +375,11 @@ export const Reader: React.FC<ReaderProps> = ({
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-gray-400">
                   <span className="uppercase tracking-wider font-mono">{book.format}</span>
-                  {chapterList.length > 1 && (
+                  {seriesChapters.length > 1 && (
                     <>
                       <span>•</span>
                       <span className="text-gray-400">
-                        Chapter {chapterList.findIndex(b => b.id === book.id) + 1} of {chapterList.length}
+                        Chapter {currentSeriesIndex >= 0 ? currentSeriesIndex + 1 : 1} of {seriesChapters.length}
                       </span>
                     </>
                   )}
@@ -361,7 +389,7 @@ export const Reader: React.FC<ReaderProps> = ({
 
             {/* Floating Chapter Dropdown Menu */}
             <AnimatePresence>
-              {showChapterDropdown && chapterList.length > 0 && (
+              {showChapterDropdown && seriesChapters.length > 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: 8, scale: 0.98 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -372,12 +400,12 @@ export const Reader: React.FC<ReaderProps> = ({
                   <div className="px-3.5 py-2.5 bg-gray-800/80 border-b border-gray-700/60 flex items-center justify-between">
                     <div className="flex items-center gap-2 text-xs font-semibold text-gray-200 uppercase tracking-wider">
                       <FiBook size={14} className="text-blue-400" />
-                      <span>Chapters ({chapterList.length})</span>
+                      <span>Chapters ({seriesChapters.length})</span>
                     </div>
                   </div>
 
                   <div className="overflow-y-auto p-1.5 space-y-1 divide-y divide-gray-800/40">
-                    {chapterList.map((ch, idx) => {
+                    {seriesChapters.map((ch, idx) => {
                       const isCurrent = ch.id === book.id;
                       return (
                         <button
@@ -508,18 +536,18 @@ export const Reader: React.FC<ReaderProps> = ({
 
       {/* Chapter Next / Prev floating overlays */}
       <div className="absolute bottom-20 w-full px-6 flex justify-between pointer-events-none z-40">
-         {hasPrev && (
+         {(canGoPrev || (hasPrev && !onSelectChapter)) && (
              <button 
-                onClick={(e) => { e.stopPropagation(); onPrevChapter?.(); }} 
+                onClick={(e) => { e.stopPropagation(); handleGoPrev(); }} 
                 className="pointer-events-auto flex items-center gap-2 px-4 py-2.5 bg-black/60 hover:bg-black/90 backdrop-blur-md text-white text-sm font-medium rounded-full border border-white/10 transition-all group shadow-xl"
              >
                 <FiChevronLeft className="group-hover:-translate-x-1 transition-transform" /> Prev Chapter
              </button>
          )}
          <div className="flex-1"></div>
-         {hasNext && (
+         {(canGoNext || (hasNext && !onSelectChapter)) && (
              <button 
-                onClick={(e) => { e.stopPropagation(); onNextChapter?.(); }} 
+                onClick={(e) => { e.stopPropagation(); handleGoNext(); }} 
                 className="pointer-events-auto flex items-center gap-2 px-4 py-2.5 bg-black/60 hover:bg-black/90 backdrop-blur-md text-white text-sm font-medium rounded-full border border-white/10 transition-all group shadow-xl"
              >
                 Next Chapter <FiChevronRight className="group-hover:translate-x-1 transition-transform" />

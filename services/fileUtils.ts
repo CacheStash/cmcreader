@@ -23,6 +23,74 @@ export const isValidImage = (filename: string) => {
   );
 };
 
+/**
+ * Extracts normalized series base name from comic title by stripping chapter/volume numbering,
+ * release tags, and trailing punctuation.
+ * e.g.:
+ * "The Masseur - 01" -> "the masseur"
+ * "The Masseur - 10" -> "the masseur"
+ * "The Masseur Ch. 05 (Digital)" -> "the masseur"
+ * "Naruto Vol. 2" -> "naruto"
+ * "Yoga" -> "yoga"
+ */
+export const extractSeriesBaseName = (rawTitle: string): string => {
+  if (!rawTitle) return '';
+
+  // 1. Remove bracketed metadata like [Scan], (Digital), (2024), etc.
+  let cleaned = rawTitle.replace(/[\(\[\{][^\)\]\}]*[\)\]\}]/g, ' ').trim();
+
+  // 2. Strip trailing chapter/volume/episode patterns like "- 01", "Ch. 05", "Vol. 2", "#10", "v02", "part 1"
+  cleaned = cleaned.replace(
+    /[-_#\s]*(?:ch(?:apter)?\.?|vol(?:ume)?\.?|v\.?|ep(?:isode)?\.?|part\.?|no\.?)?\s*\d+(?:\.\d+)?(?:\s*(?:end|fin|bonus|extra))?$/i,
+    ''
+  ).trim();
+
+  // 3. Remove any trailing punctuation (- , _ : /)
+  cleaned = cleaned.replace(/[-_:\s/]+$/, '').trim();
+
+  return cleaned.toLowerCase();
+};
+
+/**
+ * Filter and sort chapter list so it only contains chapters belonging to the same series.
+ */
+export const getMatchingSeriesChapters = (activeBook: ComicBook, queue: ComicBook[]): ComicBook[] => {
+  if (!queue || queue.length === 0) return [activeBook];
+  if (queue.length === 1) return queue;
+
+  const targetBase = extractSeriesBaseName(activeBook.title);
+  if (!targetBase) {
+    return queue.filter(b => b.id === activeBook.id || b.title === activeBook.title);
+  }
+
+  // Find candidates with matching series base
+  const matches = queue.filter(b => {
+    if (b.id === activeBook.id) return true;
+    const bBase = extractSeriesBaseName(b.title);
+    
+    // 1. Exact base match (e.g. "the masseur" === "the masseur")
+    if (bBase === targetBase) return true;
+
+    // 2. Multi-word prefix similarity match
+    // If base name has 2 or more words, allow prefix match if common words match
+    const targetWords = targetBase.split(/\s+/).filter(Boolean);
+    const bWords = bBase.split(/\s+/).filter(Boolean);
+
+    if (targetWords.length >= 2 && bWords.length >= 2) {
+      if (targetWords[0] === bWords[0] && targetWords[1] === bWords[1]) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+
+  // Sort matched chapters naturally by title
+  matches.sort((a, b) => naturalSort(a.title, b.title));
+
+  return matches.length > 0 ? matches : [activeBook];
+};
+
 // Cached PDF Document Promises to prevent re-reading/re-parsing large PDFs in parallel
 const pdfDocPromiseCache = new Map<string, Promise<pdfjsLib.PDFDocumentProxy>>();
 
