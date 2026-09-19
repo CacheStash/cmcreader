@@ -9,11 +9,13 @@ interface ElectronAPI {
     filePath: string;
     relativePath: string;
     folderName: string;
+    folderPathParts?: string[];
     format: 'cbz' | 'cbr' | 'pdf';
     fileSize: number;
     mtime: number;
   }>>;
   getCover: (filePath: string, format: string) => Promise<string | { isPdf: boolean; filePath: string } | null>;
+  saveCover?: (filePath: string, dataUrl: string) => Promise<boolean>;
   getPageList: (filePath: string, format: string) => Promise<string[]>;
   getPageData: (filePath: string, format: string, pageName: string) => Promise<string | null>;
   readFileBuffer: (filePath: string) => Promise<ArrayBuffer | null>;

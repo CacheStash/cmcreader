@@ -148,8 +148,9 @@ ipcMain.handle('library:scan-folder', async (_event, rootPath) => {
               const rel = path.relative(rootPath, fullPath);
               const parts = rel.split(path.sep);
               
-              // Folder category: subfolder name or root
-              const folderName = parts.length > 1 ? parts[0] : '';
+              // Folder category: full nested path parts and innermost folder name
+              const folderPathParts = parts.length > 1 ? parts.slice(0, -1) : [];
+              const folderName = folderPathParts.length > 0 ? folderPathParts[folderPathParts.length - 1] : '';
               const title = path.basename(entry.name, path.extname(entry.name));
 
               results.push({
@@ -157,6 +158,7 @@ ipcMain.handle('library:scan-folder', async (_event, rootPath) => {
                 filePath: fullPath,
                 relativePath: rel,
                 folderName,
+                folderPathParts,
                 format: ext,
                 fileSize: stat.size,
                 mtime: stat.mtimeMs
@@ -243,6 +245,22 @@ ipcMain.handle('library:get-cover', async (_event, { filePath, format }) => {
   }
 
   return null;
+});
+
+// 4b. Save Generated Cover to Disk Cache (e.g. for PDF)
+ipcMain.handle('library:save-cover', async (_event, { filePath, dataUrl }) => {
+  if (!filePath || !dataUrl) return false;
+  try {
+    const stat = fs.statSync(filePath);
+    const hash = getFileHash(filePath, stat.mtimeMs);
+    const cachedThumbPath = path.join(thumbnailDir, `${hash}.jpg`);
+    const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+    fs.writeFileSync(cachedThumbPath, Buffer.from(base64Data, 'base64'));
+    return true;
+  } catch (err) {
+    console.error('Failed to save cover cache for:', filePath, err);
+    return false;
+  }
 });
 
 // 5. Get Page List for a Comic

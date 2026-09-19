@@ -9,18 +9,18 @@ echo.
 
 if not exist "node_modules" (
     echo [*] Memasang dependencies...
-    call npm install
+    call pnpm install
     if errorlevel 1 goto error
 )
 
 if not exist "dist\index.html" (
     echo [*] Melakukan build aplikasi...
-    call npm run build
+    call pnpm run build
     if errorlevel 1 goto error
 )
 
 echo [*] Membuka ZenReader Desktop...
-call npm start
+call pnpm start
 if errorlevel 1 goto error
 
 exit /b 0
@@ -33,3 +33,4 @@ echo ========================================
 echo.
 pause
 exit /b 1
+

@@ -1,9 +1,9 @@
+import '../polyfills';
 import JSZip from 'jszip';
 import * as pdfjsLib from 'pdfjs-dist';
 import { ComicBook } from '../types';
 
-// @ts-ignore
-import pdfWorker from 'pdfjs-dist/build/pdf.worker?url';
+import pdfWorker from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -23,30 +23,41 @@ export const isValidImage = (filename: string) => {
   );
 };
 
-// Cached PDF Documents to prevent re-parsing large PDFs
-const pdfDocCache = new Map<string, pdfjsLib.PDFDocumentProxy>();
+// Cached PDF Document Promises to prevent re-reading/re-parsing large PDFs in parallel
+const pdfDocPromiseCache = new Map<string, Promise<pdfjsLib.PDFDocumentProxy>>();
 
-async function getPdfDocument(book: ComicBook): Promise<pdfjsLib.PDFDocumentProxy> {
+export function getPdfDocument(book: ComicBook): Promise<pdfjsLib.PDFDocumentProxy> {
   const key = book.filePath || (book.id ? String(book.id) : book.title);
-  if (pdfDocCache.has(key)) {
-    return pdfDocCache.get(key)!;
+  if (pdfDocPromiseCache.has(key)) {
+    return pdfDocPromiseCache.get(key)!;
   }
 
-  let data: ArrayBuffer | Uint8Array;
-  if (window.electronAPI && book.filePath) {
-    const buf = await window.electronAPI.readFileBuffer(book.filePath);
-    if (!buf) throw new Error('Could not read PDF file buffer from disk');
-    data = buf;
-  } else if (book.fileHandle) {
-    data = await book.fileHandle.arrayBuffer();
-  } else {
-    throw new Error('No valid file source for PDF');
-  }
+  const promise = (async () => {
+    let data: ArrayBuffer | Uint8Array;
+    if (window.electronAPI && book.filePath) {
+      const buf = await window.electronAPI.readFileBuffer(book.filePath);
+      if (!buf) throw new Error('Could not read PDF file buffer from disk');
+      data = buf;
+    } else if (book.fileHandle) {
+      data = await book.fileHandle.arrayBuffer();
+    } else {
+      throw new Error('No valid file source for PDF');
+    }
 
-  const loadingTask = pdfjsLib.getDocument({ data });
-  const pdf = await loadingTask.promise;
-  pdfDocCache.set(key, pdf);
-  return pdf;
+    const loadingTask = pdfjsLib.getDocument({
+      data,
+      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.7.284/cmaps/',
+      cMapPacked: true,
+    });
+    return await loadingTask.promise;
+  })();
+
+  pdfDocPromiseCache.set(key, promise);
+  promise.catch((err) => {
+    console.error('Failed to load PDF document for key ' + key + ':', err);
+    pdfDocPromiseCache.delete(key);
+  });
+  return promise;
 }
 
 /**
@@ -155,6 +166,50 @@ async function renderPdfPage(book: ComicBook, pageNum: number): Promise<string |
 }
 
 /**
+ * Render page 1 of PDF as a persistent base64 JPEG thumbnail and cache to disk
+ */
+async function renderPdfCover(book: ComicBook): Promise<string | null> {
+  try {
+    const pdf = await getPdfDocument(book);
+    const page = await pdf.getPage(1);
+    
+    // Scale for thumbnail (e.g. ~400px width)
+    const baseViewport = page.getViewport({ scale: 1.0 });
+    const targetWidth = 400;
+    const scale = Math.min(1.0, Math.max(0.3, targetWidth / baseViewport.width));
+    const viewport = page.getViewport({ scale });
+
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+
+    await page.render({
+      canvasContext: context,
+      viewport
+    } as any).promise;
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    canvas.width = 0;
+    canvas.height = 0;
+
+    // Persist to Electron disk cache if available
+    if (window.electronAPI?.saveCover && book.filePath) {
+      window.electronAPI.saveCover(book.filePath, dataUrl).catch(e => {
+        console.warn('Failed to cache PDF cover to disk:', e);
+      });
+    }
+
+    return dataUrl;
+  } catch (err) {
+    console.error('Failed to render PDF cover:', err);
+    return null;
+  }
+}
+
+/**
  * Extract cover thumbnail for Library view
  */
 export const extractCover = async (book: ComicBook): Promise<string | undefined> => {
@@ -166,7 +221,7 @@ export const extractCover = async (book: ComicBook): Promise<string | undefined>
     }
     // If result is object { isPdf: true }
     if (result && typeof result === 'object' && result.isPdf) {
-      const pdfCover = await renderPdfPage(book, 1);
+      const pdfCover = await renderPdfCover(book);
       return pdfCover || undefined;
     }
   }
@@ -185,7 +240,7 @@ export const extractCover = async (book: ComicBook): Promise<string | undefined>
         return URL.createObjectURL(blob);
       }
     } else if (book.format === 'pdf') {
-      const pdfCover = await renderPdfPage(book, 1);
+      const pdfCover = await renderPdfCover(book);
       return pdfCover || undefined;
     }
   }

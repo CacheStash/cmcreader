@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { extractCover, getFileExtension } from '../services/fileUtils';
@@ -10,16 +10,32 @@ import {
   FiMoreVertical, FiCheck, FiLayers, FiCheckSquare, FiSquare, 
   FiInbox, FiSearch, FiCheckCircle, FiEye, FiCornerUpLeft, 
   FiChevronRight, FiFolderPlus, FiFolderMinus, FiHardDrive, 
-  FiExternalLink, FiKey
+  FiExternalLink, FiKey, FiLogOut
 } from 'react-icons/fi';
 
 const UNCATEGORIZED_VIEW_ID = -1;
+
+function getPageNumbers(current: number, total: number): (number | string)[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, '...', total];
+  }
+  if (current >= total - 3) {
+    return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, '...', current - 1, current, current + 1, '...', total];
+}
 
 interface LibraryProps {
   onSelectBook: (book: ComicBook, currentList: ComicBook[]) => void;
   onLockApp: () => void;
   pinEnabled: boolean;
   onOpenPinSettings: () => void;
+  onLogout?: () => void;
+  currentFolderId?: number | null;
+  onFolderChange?: (folderId: number | null) => void;
 }
 
 // Cover image component supporting both disk cache URL and legacy Blob
@@ -30,9 +46,11 @@ const CoverImage: React.FC<{
   small?: boolean; 
 }> = ({ coverUrl, blob, title, small = false }) => {
   const [url, setUrl] = useState<string>(coverUrl || '');
+  const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
-    if (coverUrl) {
+    setHasError(false);
+    if (coverUrl && !coverUrl.startsWith('blob:')) {
       setUrl(coverUrl);
     } else if (blob) {
       const objectUrl = URL.createObjectURL(blob);
@@ -43,7 +61,7 @@ const CoverImage: React.FC<{
     }
   }, [coverUrl, blob]);
 
-  if (!url) {
+  if (!url || hasError) {
     return (
       <div className={'flex flex-col items-center justify-center text-gray-700 bg-gray-950 border border-gray-800 ' + (small ? 'w-full h-full' : 'w-full h-full p-4')}>
         <FiRefreshCw className={(small ? 'text-xs' : 'text-3xl') + ' mb-1 opacity-40 animate-spin text-blue-500'} />
@@ -51,14 +69,24 @@ const CoverImage: React.FC<{
       </div>
     );
   }
-  return <img src={url} alt={title} className="w-full h-full object-cover transition-opacity duration-300" />;
+  return (
+    <img 
+      src={url} 
+      alt={title} 
+      onError={() => setHasError(true)} 
+      className="w-full h-full object-cover transition-opacity duration-300" 
+    />
+  );
 };
 
 export const Library: React.FC<LibraryProps> = ({ 
   onSelectBook, 
   onLockApp, 
   pinEnabled, 
-  onOpenPinSettings 
+  onOpenPinSettings,
+  onLogout,
+  currentFolderId = null,
+  onFolderChange
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -75,11 +103,36 @@ export const Library: React.FC<LibraryProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [showListThumbnails, setShowListThumbnails] = useState(true);
 
+  // --- PAGINATION STATE ---
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(18);
+
   // --- FOLDER & SELECTION STATE ---
-  const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
+  const [activeFolderId, setActiveFolderIdState] = useState<number | null>(currentFolderId ?? null);
+  
+  const setActiveFolderId = useCallback((folderIdOrFn: number | null | ((prev: number | null) => number | null)) => {
+    setActiveFolderIdState(prev => {
+      const next = typeof folderIdOrFn === 'function' ? folderIdOrFn(prev) : folderIdOrFn;
+      if (onFolderChange) {
+        onFolderChange(next);
+      }
+      return next;
+    });
+  }, [onFolderChange]);
+
+  useEffect(() => {
+    if (currentFolderId !== undefined && currentFolderId !== activeFolderId) {
+      setActiveFolderIdState(currentFolderId);
+    }
+  }, [currentFolderId]);
   const [newFolderName, setNewFolderName] = useState('');
   const [showFolderInput, setShowFolderInput] = useState(false);
   
+  // Reset to page 1 whenever active folder or search query changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeFolderId, searchQuery]);
+
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedBookIds, setSelectedBookIds] = useState<number[]>([]);
   const [selectedFolderIds, setSelectedFolderIds] = useState<number[]>([]); 
@@ -129,10 +182,24 @@ export const Library: React.FC<LibraryProps> = ({
       const scannedComics = await window.electronAPI.scanFolder(targetPath);
       setScanStatus('Found ' + scannedComics.length + ' comics. Syncing database...');
 
-      // 1. Gather all existing folders & comics
+      // 1. Gather all existing folders & build map by "parentId:name.toLowerCase()"
       const allFolders = await db.folders.toArray();
-      const folderMap = new Map<string, number>();
-      allFolders.forEach(f => folderMap.set(f.name.toLowerCase(), f.id!));
+      const folderMap = new Map<string, number>(); // key: `${parentId ?? 'root'}:${name.toLowerCase()}`
+      allFolders.forEach(f => {
+        const pKey = `${f.parentId ?? 'root'}:${f.name.toLowerCase()}`;
+        folderMap.set(pKey, f.id!);
+      });
+
+      // Helper to find or create folder in hierarchy
+      const getOrCreateFolder = async (folderName: string, parentId?: number): Promise<number> => {
+        const key = `${parentId ?? 'root'}:${folderName.toLowerCase()}`;
+        if (folderMap.has(key)) {
+          return folderMap.get(key)!;
+        }
+        const newFid = await db.folders.add({ name: folderName, parentId });
+        folderMap.set(key, newFid);
+        return newFid;
+      };
 
       // 2. Map existing comics by filePath
       const existingComics = await db.comics.toArray();
@@ -146,16 +213,16 @@ export const Library: React.FC<LibraryProps> = ({
       for (const item of scannedComics) {
         let assignedFolderId: number | undefined = undefined;
 
-        // Auto-create folder if item is in a subfolder
-        if (item.folderName) {
-          const key = item.folderName.toLowerCase();
-          if (folderMap.has(key)) {
-            assignedFolderId = folderMap.get(key);
-          } else {
-            const newFid = await db.folders.add({ name: item.folderName });
-            folderMap.set(key, newFid);
-            assignedFolderId = newFid;
+        // Auto-create full folder hierarchy if item is in subfolder(s)
+        if (item.folderPathParts && item.folderPathParts.length > 0) {
+          let currentParentId: number | undefined = undefined;
+          for (const segment of item.folderPathParts) {
+            currentParentId = await getOrCreateFolder(segment, currentParentId);
           }
+          assignedFolderId = currentParentId;
+        } else if (item.folderName) {
+          // Fallback if folderPathParts is absent
+          assignedFolderId = await getOrCreateFolder(item.folderName, undefined);
         }
 
         const existing = existingPathMap.get(item.filePath.toLowerCase());
@@ -183,10 +250,6 @@ export const Library: React.FC<LibraryProps> = ({
         }
       }
 
-      // Add to cover generation queue
-      if (newBooksToQueueCovers.length > 0) {
-        setCoverQueue(prev => Array.from(new Set([...prev, ...newBooksToQueueCovers])));
-      }
       setScanStatus('Scan complete (' + scannedComics.length + ' comics found)');
     } catch (err) {
       console.error('Scan folder error:', err);
@@ -261,6 +324,17 @@ export const Library: React.FC<LibraryProps> = ({
     else return all.filter(c => c.folderId === activeFolderId);
   }, [activeFolderId, searchQuery]);
 
+  // --- PAGINATION COMPUTATION ---
+  const totalComics = comics?.length || 0;
+  const totalPages = Math.max(1, Math.ceil(totalComics / itemsPerPage));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const paginatedComics = useMemo(() => {
+    if (!comics) return [];
+    const start = (safeCurrentPage - 1) * itemsPerPage;
+    return comics.slice(start, start + itemsPerPage);
+  }, [comics, safeCurrentPage, itemsPerPage]);
+
   // --- COVER GENERATION BACKGROUND WORKER ---
   useEffect(() => {
     if (coverQueue.length === 0) return;
@@ -269,7 +343,7 @@ export const Library: React.FC<LibraryProps> = ({
     const generateCover = async () => {
       try {
         const book = await db.comics.get(bookId);
-        if (book && !book.coverUrl && !book.coverBlob) {
+        if (book && (!book.coverUrl || book.coverUrl.startsWith('blob:')) && !book.coverBlob) {
           const coverUrl = await extractCover(book);
           if (coverUrl) {
             await db.comics.update(bookId, { coverUrl });
@@ -285,14 +359,62 @@ export const Library: React.FC<LibraryProps> = ({
     generateCover();
   }, [coverQueue]);
 
-  // Check comics on mount / view change that might still lack cover
+  // --- PRIORITIZED COVER LOADING & BACKGROUND PRE-CACHING ---
+  // 1. Prioritize visible comics on the current page (Page 1 first, items 1 to 18)
+  // 2. Automatically switch priority immediately when opening subfolders
+  // 3. Continue caching all remaining comics in the background so future visits are 0ms instant
   useEffect(() => {
     if (!comics || comics.length === 0) return;
-    const missing = comics.filter(c => !c.coverUrl && !c.coverBlob).map(c => c.id!);
-    if (missing.length > 0) {
-      setCoverQueue(prev => Array.from(new Set([...prev, ...missing])));
-    }
-  }, [comics]);
+
+    let isMounted = true;
+
+    const updateQueue = async () => {
+      // 1. Top Priority: Visible comics on the current page (items 1 to 18)
+      const priorityIds: number[] = [];
+      const prioritySet = new Set<number>();
+      
+      for (const c of paginatedComics) {
+        if (c.id && (!c.coverUrl || c.coverUrl.startsWith('blob:')) && !c.coverBlob) {
+          priorityIds.push(c.id);
+          prioritySet.add(c.id);
+        }
+      }
+
+      // 2. Secondary Priority: Remaining comics in the current active folder (Page 2, 3, etc.)
+      const remainingFolderIds: number[] = [];
+      for (const c of comics) {
+        if (c.id && (!c.coverUrl || c.coverUrl.startsWith('blob:')) && !c.coverBlob && !prioritySet.has(c.id)) {
+          remainingFolderIds.push(c.id);
+          prioritySet.add(c.id);
+        }
+      }
+
+      // 3. Background: Any remaining uncached comics across the entire library
+      let remainingOtherIds: number[] = [];
+      try {
+        const allBooks = await db.comics.toArray();
+        for (const c of allBooks) {
+          if (c.id && (!c.coverUrl || c.coverUrl.startsWith('blob:')) && !c.coverBlob && !prioritySet.has(c.id)) {
+            remainingOtherIds.push(c.id);
+            prioritySet.add(c.id);
+          }
+        }
+      } catch (err) {
+        console.error('Error querying remaining comics for queue:', err);
+      }
+
+      if (isMounted) {
+        const fullQueue = [...priorityIds, ...remainingFolderIds, ...remainingOtherIds];
+        setCoverQueue(fullQueue);
+      }
+    };
+
+    updateQueue();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeFolderId, safeCurrentPage, searchQuery, itemsPerPage, comics?.length]);
 
   // Navigation
   const navigateToFolder = (folderId: number | null) => {
@@ -424,7 +546,6 @@ export const Library: React.FC<LibraryProps> = ({
           newBookIds.push(newId);
         }
       }
-      setCoverQueue(prev => [...prev, ...newBookIds]);
     } catch (e) {
       console.error(e);
     } finally {
@@ -663,13 +784,25 @@ export const Library: React.FC<LibraryProps> = ({
             )}
           </div>
 
-          <button 
-            onClick={handleFactoryReset} 
-            className="p-1.5 text-gray-600 hover:text-red-400 transition-colors" 
-            title="Reset Library Cache"
-          >
-            <FiTrash2 size={16} />
-          </button>
+          <div className="flex items-center gap-1">
+            {onLogout && (
+              <button 
+                onClick={onLogout} 
+                className="p-1.5 text-gray-500 hover:text-red-400 hover:bg-gray-800 rounded transition-colors" 
+                title="Log Out of ZenReader Web"
+              >
+                <FiLogOut size={16} />
+              </button>
+            )}
+
+            <button 
+              onClick={handleFactoryReset} 
+              className="p-1.5 text-gray-600 hover:text-red-400 transition-colors" 
+              title="Reset Library Cache"
+            >
+              <FiTrash2 size={16} />
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -724,6 +857,32 @@ export const Library: React.FC<LibraryProps> = ({
                   <FiChevronRight className="text-gray-600 text-lg flex-shrink-0" />
                   <span className="text-blue-500 flex-shrink-0">Uncategorized</span>
                 </>
+              )}
+            </div>
+
+            {totalComics > 0 && (
+              <span className="hidden sm:inline-flex items-center text-xs font-normal text-gray-400 bg-gray-800/80 px-2.5 py-1 rounded-full border border-gray-700/60 shrink-0">
+                {totalComics} komik {totalPages > 1 && `· Hal ${safeCurrentPage}/${totalPages}`}
+              </span>
+            )}
+
+            {/* Mobile Header Quick Actions */}
+            <div className="flex md:hidden items-center gap-2 ml-auto shrink-0">
+              <button
+                onClick={onOpenPinSettings}
+                className={'p-2 rounded-lg text-xs border transition-colors ' + (pinEnabled ? 'bg-blue-900/30 border-blue-500/50 text-blue-400' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white')}
+                title={pinEnabled ? 'PIN Aktif (Klik untuk ubah/nonaktifkan)' : 'Pasang Kunci PIN'}
+              >
+                <FiLock size={16} />
+              </button>
+              {onLogout && (
+                <button
+                  onClick={onLogout}
+                  className="p-2 rounded-lg text-xs bg-gray-800 border border-gray-700 text-gray-400 hover:text-red-400 hover:border-red-800/60 transition-colors"
+                  title="Logout"
+                >
+                  <FiLogOut size={16} />
+                </button>
               )}
             </div>
           </div>
@@ -841,7 +1000,7 @@ export const Library: React.FC<LibraryProps> = ({
 
         {/* COMIC BOOKS GRID & LIST */}
         <div className={viewMode === 'grid' ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5' : 'flex flex-col gap-2'}>
-          {comics?.map((book) => {
+          {paginatedComics.map((book) => {
             const isSelected = selectedBookIds.includes(book.id!);
             
             const GridCard = () => (
@@ -939,6 +1098,84 @@ export const Library: React.FC<LibraryProps> = ({
             );
           })}
         </div>
+
+        {/* PAGINATION CONTROLS */}
+        {totalComics > 0 && (
+          <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 py-4 px-2 border-t border-gray-800/80 text-sm text-gray-400">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">
+                Menampilkan <strong className="text-white">{((safeCurrentPage - 1) * itemsPerPage) + 1}</strong> - <strong className="text-white">{Math.min(safeCurrentPage * itemsPerPage, totalComics)}</strong> dari <strong className="text-blue-400">{totalComics}</strong> komik
+              </span>
+              <select
+                value={itemsPerPage}
+                onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1 text-xs text-gray-200 outline-none focus:border-blue-500 cursor-pointer"
+              >
+                <option value={12}>12 / hal</option>
+                <option value={18}>18 / hal (Default)</option>
+                <option value={24}>24 / hal</option>
+                <option value={36}>36 / hal</option>
+                <option value={48}>48 / hal</option>
+              </select>
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                <button
+                  onClick={() => setCurrentPage(1)}
+                  disabled={safeCurrentPage <= 1}
+                  className="px-2.5 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:bg-gray-700 disabled:opacity-30 disabled:pointer-events-none text-xs text-white transition-colors"
+                  title="Halaman Pertama"
+                >
+                  &laquo;
+                </button>
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={safeCurrentPage <= 1}
+                  className="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:bg-gray-700 disabled:opacity-30 disabled:pointer-events-none text-xs text-white transition-colors"
+                  title="Halaman Sebelumnya"
+                >
+                  &lsaquo; Prev
+                </button>
+
+                {getPageNumbers(safeCurrentPage, totalPages).map((p, idx) => (
+                  p === '...' ? (
+                    <span key={`ellipsis-${idx}`} className="px-1.5 text-gray-600 text-xs">...</span>
+                  ) : (
+                    <button
+                      key={`page-${p}`}
+                      onClick={() => setCurrentPage(Number(p))}
+                      className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-medium transition-all ${
+                        safeCurrentPage === p
+                          ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-600/30'
+                          : 'bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  )
+                ))}
+
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={safeCurrentPage >= totalPages}
+                  className="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:bg-gray-700 disabled:opacity-30 disabled:pointer-events-none text-xs text-white transition-colors"
+                  title="Halaman Selanjutnya"
+                >
+                  Next &rsaquo;
+                </button>
+                <button
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={safeCurrentPage >= totalPages}
+                  className="px-2.5 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:bg-gray-700 disabled:opacity-30 disabled:pointer-events-none text-xs text-white transition-colors"
+                  title="Halaman Terakhir"
+                >
+                  &raquo;
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* MULTI-SELECT FLOATING ACTION BAR */}

@@ -5,12 +5,15 @@ import { getPageList, loadSinglePage } from '../services/fileUtils';
 import { db } from '../db';
 import { 
   FiArrowLeft, FiColumns, FiMaximize, FiArrowDown, 
-  FiZoomIn, FiZoomOut, FiX, FiChevronRight, FiChevronLeft, FiLoader 
+  FiZoomIn, FiZoomOut, FiX, FiChevronRight, FiChevronLeft, FiLoader,
+  FiChevronDown, FiBook, FiCheck
 } from 'react-icons/fi';
 
 interface ReaderProps {
   book: ComicBook;
   onClose: () => void;
+  chapterList?: ComicBook[];
+  onSelectChapter?: (book: ComicBook) => void;
   onNextChapter?: () => void;
   onPrevChapter?: () => void;
   hasNext?: boolean;
@@ -54,6 +57,14 @@ const VerticalPageItem: React.FC<{
     return () => observer.disconnect();
   }, [book, pageId, index, src, loading, onVisible]);
 
+  useEffect(() => {
+    return () => {
+      if (src && src.startsWith('blob:')) {
+        URL.revokeObjectURL(src);
+      }
+    };
+  }, [src]);
+
   return (
     <div
       ref={imgRef}
@@ -81,6 +92,8 @@ const VerticalPageItem: React.FC<{
 export const Reader: React.FC<ReaderProps> = ({ 
   book, 
   onClose, 
+  chapterList = [],
+  onSelectChapter,
   onNextChapter, 
   onPrevChapter, 
   hasNext, 
@@ -95,6 +108,23 @@ export const Reader: React.FC<ReaderProps> = ({
   const [zoom, setZoom] = useState(100);
   const [tempPageInput, setTempPageInput] = useState('');
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [showChapterDropdown, setShowChapterDropdown] = useState(false);
+  const chapterDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close chapter dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (chapterDropdownRef.current && !chapterDropdownRef.current.contains(e.target as Node)) {
+        setShowChapterDropdown(false);
+      }
+    };
+    if (showChapterDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showChapterDropdown]);
 
   // Drag Scrolling State
   const containerRef = useRef<HTMLDivElement>(null);
@@ -128,6 +158,19 @@ export const Reader: React.FC<ReaderProps> = ({
     initPageList();
     return () => {
       isMounted = false;
+    };
+  }, [book]);
+
+  // Clean up blob URLs when book changes or Reader unmounts
+  const pageCacheRef = useRef<Record<number, string>>({});
+  pageCacheRef.current = pageCache;
+  useEffect(() => {
+    return () => {
+      Object.values(pageCacheRef.current).forEach(url => {
+        if (url && url.startsWith('blob:')) {
+          URL.revokeObjectURL(url);
+        }
+      });
     };
   }, [book]);
 
@@ -286,9 +329,88 @@ export const Reader: React.FC<ReaderProps> = ({
           <button onClick={onClose} className="p-2 text-gray-300 hover:text-white hover:bg-gray-800 rounded-full transition-colors">
             <FiArrowLeft size={20} />
           </button>
-          <div className="truncate max-w-md">
-            <h1 className="text-sm font-semibold text-white truncate">{book.title}</h1>
-            <span className="text-[11px] text-gray-400 uppercase tracking-wider">{book.format}</span>
+          <div className="relative" ref={chapterDropdownRef}>
+            <button
+              onClick={() => setShowChapterDropdown(prev => !prev)}
+              className="flex items-center gap-2 group max-w-sm sm:max-w-md px-2.5 py-1.5 rounded-lg hover:bg-gray-800/80 transition-colors text-left"
+              title="Click to switch chapters"
+            >
+              <div className="truncate">
+                <div className="flex items-center gap-2">
+                  <h1 className="text-sm font-semibold text-white truncate group-hover:text-blue-400 transition-colors">
+                    {book.title}
+                  </h1>
+                  <FiChevronDown 
+                    size={14} 
+                    className={'text-gray-400 transition-transform duration-200 shrink-0 ' + (showChapterDropdown ? 'rotate-180 text-blue-400' : '')} 
+                  />
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                  <span className="uppercase tracking-wider font-mono">{book.format}</span>
+                  {chapterList.length > 1 && (
+                    <>
+                      <span>•</span>
+                      <span className="text-gray-400">
+                        Chapter {chapterList.findIndex(b => b.id === book.id) + 1} of {chapterList.length}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </button>
+
+            {/* Floating Chapter Dropdown Menu */}
+            <AnimatePresence>
+              {showChapterDropdown && chapterList.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute left-0 top-full mt-2 w-80 max-h-96 bg-gray-900/95 backdrop-blur-xl border border-gray-700/80 rounded-xl shadow-2xl overflow-hidden flex flex-col z-50 ring-1 ring-black/40"
+                >
+                  <div className="px-3.5 py-2.5 bg-gray-800/80 border-b border-gray-700/60 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-gray-200 uppercase tracking-wider">
+                      <FiBook size={14} className="text-blue-400" />
+                      <span>Chapters ({chapterList.length})</span>
+                    </div>
+                  </div>
+
+                  <div className="overflow-y-auto p-1.5 space-y-1 divide-y divide-gray-800/40">
+                    {chapterList.map((ch, idx) => {
+                      const isCurrent = ch.id === book.id;
+                      return (
+                        <button
+                          key={ch.id || idx}
+                          onClick={() => {
+                            if (onSelectChapter && !isCurrent) {
+                              onSelectChapter(ch);
+                            }
+                            setShowChapterDropdown(false);
+                          }}
+                          className={
+                            'w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs text-left transition-all duration-150 ' +
+                            (isCurrent
+                              ? 'bg-blue-600/20 text-blue-300 font-medium border border-blue-500/30'
+                              : 'text-gray-300 hover:bg-gray-800/70 hover:text-white')
+                          }
+                        >
+                          <div className="truncate flex items-center gap-2">
+                            <span className={'w-5 text-[11px] font-mono shrink-0 ' + (isCurrent ? 'text-blue-400 font-bold' : 'text-gray-500')}>
+                              {idx + 1}.
+                            </span>
+                            <span className="truncate">{ch.title}</span>
+                          </div>
+                          {isCurrent && (
+                            <FiCheck size={14} className="text-blue-400 shrink-0 ml-2" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
 

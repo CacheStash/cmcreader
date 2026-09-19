@@ -1,6 +1,13 @@
+import './polyfills';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { webApi } from './services/webApi';
+
+// If running in browser (outside Electron), use webApi adapter
+if (!window.electronAPI) {
+  window.electronAPI = webApi;
+}
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
